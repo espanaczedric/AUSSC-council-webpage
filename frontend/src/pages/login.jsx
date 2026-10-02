@@ -36,6 +36,10 @@ function Login() {
                 JSON.stringify(data.user)
             );
 
+            window.dispatchEvent(
+                new Event("auth-change")
+            );
+
             // Redirect based on role
             if (data.user.role === "admin") {
                 navigate("/admin");

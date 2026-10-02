@@ -207,6 +207,33 @@ VALUES (
 
 
 -- =========================================================
+-- ADMIN ACCOUNT: czba.espana.au@phinmaed.com
+-- =========================================================
+-- Password: Admin123!
+
+INSERT INTO users (
+    student_id,
+    first_name,
+    last_name,
+    email,
+    password,
+    course,
+    year_level,
+    role
+)
+VALUES (
+    'ADMIN-002',
+    'Czba',
+    'España',
+    'czba.espana.au@phinmaed.com',
+    '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC6J1u9ZcJQ9Y8bY7m5W',
+    'Administration',
+    'N/A',
+    'admin'
+);
+
+
+-- =========================================================
 -- SAMPLE EVENT
 -- =========================================================
 

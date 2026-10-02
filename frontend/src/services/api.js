@@ -124,3 +124,13 @@ export async function deleteAdminHighlight(id) {
         body: JSON.stringify({ id })
     });
 }
+
+export async function logoutUser() {
+    await apiRequest("/auth/logout.php", {
+        method: "POST",
+        credentials: "include"
+    });
+
+    localStorage.removeItem("user");
+    window.dispatchEvent(new Event("auth-change"));
+}
