@@ -8,6 +8,9 @@ import {
 import Home from "./pages/Home";
 import Events from "./pages/Events";
 import EventDetailsPage from "./pages/EventDetailsPage";
+import Announcements from "./pages/Announcements";
+import CommitteeDirectory from "./pages/CommitteeDirectory";
+import AboutCouncil from "./pages/AboutCouncil";
 
 // Registration
 import Register from "./pages/Register";
@@ -17,6 +20,7 @@ import MyEvents from "./pages/MyEvents";
 // Authentication
 import Login from "./pages/login";
 import RegisterAccount from "./pages/RegisterAccount";
+import ForgotPassword from "./pages/ForgotPassword";
 
 // Admin Pages
 import AdminDashboard from "./pages/admin/AdminDashboard";
@@ -28,6 +32,17 @@ import Attendance from "./pages/admin/Attendance";
 import QRScannerPage from "./pages/admin/QRScannerPage";
 import EventHighlightsManager from "./pages/admin/EventHighlightsManager";
 import Users from "./pages/admin/Users";
+
+function NotFound() {
+    return (
+        <main className="not-found-page">
+            <span>404 · PAGE NOT FOUND</span>
+            <h1>We can’t find that page.</h1>
+            <p>The link may be outdated, or the page may have moved.</p>
+            <a className="register-button" href="/">Back to home</a>
+        </main>
+    );
+}
 
 function App() {
     return (
@@ -48,6 +63,10 @@ function App() {
                     element={<Events />}
                 />
 
+                <Route path="/announcements" element={<Announcements />} />
+                <Route path="/committees" element={<CommitteeDirectory />} />
+                <Route path="/about" element={<AboutCouncil />} />
+
                 <Route
                     path="/events/:id"
                     element={<EventDetailsPage />}
@@ -66,6 +85,11 @@ function App() {
                 <Route
                     path="/register-account"
                     element={<RegisterAccount />}
+                />
+
+                <Route
+                    path="/forgot-password"
+                    element={<ForgotPassword />}
                 />
 
 
@@ -137,6 +161,8 @@ function App() {
                     path="/admin/users"
                     element={<Users />}
                 />
+
+                <Route path="*" element={<NotFound />} />
 
             </Routes>
         </BrowserRouter>

@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 
 import Navbar from "../components/Navbar";
 import EventHero from "../components/EventHero";
@@ -85,33 +84,34 @@ function Home() {
 
             <main>
 
-                {loadError ? (
-                    <section className="event-empty-state upcoming-empty-state" role="alert">
-                        <span>EVENTS</span>
-                        <h1>Event information is unavailable</h1>
-                        <p>Please refresh the page to try again.</p>
-                    </section>
-                ) : upcoming ? (
-                    <EventHero event={upcoming} />
-                ) : (
-                    <section className="event-empty-state upcoming-empty-state">
-                        <span>UPCOMING</span>
-                        <h1>No upcoming events yet</h1>
-                        <p>Check back soon for the next campus event.</p>
-                        <Link to="/events" className="register-button">
-                            Browse Events
-                        </Link>
-                    </section>
+                <EventHero event={loadError ? null : upcoming} />
+
+                {loadError && (
+                    <p className="home-event-error" role="alert">
+                        Event listings are temporarily unavailable. Please try again later.
+                    </p>
                 )}
+
+                <section className="council-intro" id="council">
+                    <div className="council-intro-copy">
+                        <span className="eyebrow">Who we are</span>
+                        <h2>Representing students.<br />Building community.</h2>
+                        <p>The Student Council works to make campus life more connected, meaningful, and responsive to the students it serves.</p>
+                    </div>
+                    <div className="council-pillars" aria-label="Student Council committees">
+                        <article><span>01</span><h3>Executive</h3><p>Leadership and council-wide coordination</p></article>
+                        <article><span>02</span><h3>Production</h3><p>Event logistics and technical operations</p></article>
+                        <article><span>03</span><h3>Publication</h3><p>Creative work and student communications</p></article>
+                        <article><span>04</span><h3>Program</h3><p>Activities and event experiences</p></article>
+                    </div>
+                </section>
 
 
                 <section className="previous-section">
 
                     <div className="section-heading">
 
-                        <span>
-                            EXPLORE
-                        </span>
+                        <span>LOOKING BACK</span>
 
                         <h2>
                             Previous Events

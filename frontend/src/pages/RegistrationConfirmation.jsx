@@ -17,6 +17,8 @@ function RegistrationConfirmation() {
 
     const [loading, setLoading] =
         useState(true);
+    const [loadError, setLoadError] =
+        useState("");
 
     const [downloading, setDownloading] =
         useState(false);
@@ -172,7 +174,7 @@ function RegistrationConfirmation() {
 
             try {
 
-                const data = await apiRequest(`/registration/get-registration.php?code=${encodeURIComponent(code)}`, {
+                const data = await apiRequest(`/registration/by-code?code=${encodeURIComponent(code)}`, {
                     credentials: "include"
                 });
 
@@ -184,14 +186,14 @@ function RegistrationConfirmation() {
                     );
 
                 } else {
-
-                    alert(data.message);
+                    setLoadError(data.message || "This registration could not be found.");
 
                 }
 
             } catch (error) {
 
                 console.error(error);
+                setLoadError(error.message || "Unable to load this registration. Please try again.");
 
             } finally {
 
@@ -229,6 +231,8 @@ function RegistrationConfirmation() {
                     <h1>
                         Registration Not Found
                     </h1>
+
+                    <p role="alert">{loadError || "This registration may have expired or the link is incorrect."}</p>
 
                     <Link to="/events">
                         Back to Events

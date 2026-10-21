@@ -18,12 +18,12 @@ function MyEvents() {
 
                 /*
                  * This will connect to the
-                 * get-my-registrations.php
+                 * Load registrations for the signed-in student.
                  * endpoint once authentication
                  * is implemented.
                  */
 
-                const data = await apiRequest("/registration/get-my-registrations.php", {
+                const data = await apiRequest("/registration/my", {
                     credentials: "include"
                 });
 

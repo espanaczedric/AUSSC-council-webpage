@@ -1,0 +1,789 @@
+import "dotenv/config";
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import bcrypt from "bcryptjs";
+import cors from "cors";
+import express from "express";
+import session from "express-session";
+import { MongoClient } from "mongodb";
+import multer from "multer";
+import { fileTypeFromBuffer } from "file-type";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const rootDir = path.resolve(__dirname, "../..");
+const uploadRoot = path.resolve(process.env.UPLOAD_DIR || path.join(rootDir, "uploads"));
+const port = Number(process.env.PORT || 3000);
+const mongoUri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017";
+const databaseName = process.env.MONGODB_DATABASE || "university_events";
+const allowedOrigins = (process.env.FRONTEND_ORIGINS || "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174")
+    .split(",").map((origin) => origin.trim()).filter(Boolean);
+
+const mongoClient = new MongoClient(mongoUri, { serverSelectionTimeoutMS: Number(process.env.MONGODB_CONNECT_TIMEOUT_MS || 10000) });
+let db;
+let collections;
+let databaseReady = false;
+const passwordResetIpWindows = new Map();
+
+const app = express();
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
+app.use(cors({
+    origin(origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error("Origin is not allowed."));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
+app.use(express.json({ limit: "1mb" }));
+
+class MongoSessionStore extends session.Store {
+    constructor(collection = null) {
+        super();
+        this.collection = collection;
+    }
+
+    get(sessionId, callback) {
+        this.collection.findOne({ _id: sessionId, expiresAt: { $gt: new Date() } })
+            .then((record) => callback(null, record?.data || null))
+            .catch(callback);
+    }
+
+    set(sessionId, data, callback = () => {}) {
+        const expiresAt = data.cookie?.expires ? new Date(data.cookie.expires) : new Date(Date.now() + 24 * 60 * 60 * 1000);
+        this.collection.updateOne(
+            { _id: sessionId },
+            { $set: { data, expiresAt, updatedAt: new Date() } },
+            { upsert: true }
+        ).then(() => callback(null)).catch(callback);
+    }
+
+    touch(sessionId, data, callback = () => {}) {
+        const expiresAt = data.cookie?.expires ? new Date(data.cookie.expires) : new Date(Date.now() + 24 * 60 * 60 * 1000);
+        this.collection.updateOne({ _id: sessionId }, { $set: { expiresAt, updatedAt: new Date() } })
+            .then(() => callback(null)).catch(callback);
+    }
+
+    destroy(sessionId, callback = () => {}) {
+        this.collection.deleteOne({ _id: sessionId }).then(() => callback(null)).catch(callback);
+    }
+}
+
+const sessionStore = new MongoSessionStore();
+app.use(session({
+    name: "university_events.sid",
+    secret: process.env.SESSION_SECRET || "local-development-secret-change-before-deployment",
+    store: sessionStore,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.SESSION_COOKIE_SECURE === "true",
+        maxAge: 24 * 60 * 60 * 1000
+    }
+}));
+app.use("/uploads", express.static(uploadRoot, { fallthrough: false, index: false, maxAge: "1h" }));
+
+const text = (value) => value == null ? "" : String(value);
+const studentIdPattern = /^01-[0-9]{4}-[0-9]{6}$/;
+const registrationCode = () => `REG-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
+const ok = (res, message, extra = {}) => res.status(200).json(toApi({ success: true, ...(message ? { message } : {}), ...extra }));
+const fail = (res, status, message, extra = {}) => res.status(status).json({ success: false, message, ...extra });
+const adminOnly = (req, res, next) => req.session?.role === "admin" ? next() : fail(res, 401, "Administrator access is required.");
+const signedIn = (req, res, next) => req.session?.userId ? next() : fail(res, 401, "You must be signed in to continue.");
+
+function toApi(value) {
+    if (value instanceof Date) {
+        const parts = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit",
+            hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
+        }).formatToParts(value).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+        return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+    }
+    if (Array.isArray(value)) return value.map(toApi);
+    if (value && typeof value === "object") {
+        return Object.fromEntries(Object.entries(value)
+            .filter(([key]) => key !== "_id" && key !== "passwordHash")
+            .map(([key, item]) => [key, toApi(item)]));
+    }
+    return value;
+}
+
+async function nextId(name) {
+    const result = await collections.counters.findOneAndUpdate(
+        { _id: name }, { $inc: { value: 1 } }, { upsert: true, returnDocument: "after" }
+    );
+    const document = result?.value && typeof result.value === "object" ? result.value : result;
+    return document.value;
+}
+
+function parseDate(value) {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value || "")) return null;
+    const [year, month, day, hour, minute] = value.split(/[T:-]/).map(Number);
+    const date = new Date(`${value}:00+08:00`);
+    if (Number.isNaN(date.getTime())) return null;
+    const manila = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+    }).formatToParts(date).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+    if (Number(manila.year) !== year || Number(manila.month) !== month || Number(manila.day) !== day || Number(manila.hour) !== hour || Number(manila.minute) !== minute) return null;
+    return date;
+}
+
+function displayStatus(event, now = new Date()) {
+    if (event.status === "cancelled") return "cancelled";
+    if (event.start_date <= now && event.end_date >= now) return "ongoing";
+    if (event.end_date < now) return "completed";
+    return "upcoming";
+}
+
+function withEventStatus(event) {
+    return { ...event, display_status: displayStatus(event) };
+}
+
+function publicUser(user) {
+    if (!user) return null;
+    const { passwordHash, ...safe } = user;
+    return safe;
+}
+
+function duplicateKey(error) {
+    return error?.code === 11000;
+}
+
+function passwordResetDigest(email, value) {
+    return crypto.createHmac("sha256", process.env.PASSWORD_RESET_SECRET).update(`${email}\0${value}`).digest("hex");
+}
+
+function safeDigestEqual(a, b) {
+    if (!/^[a-f0-9]{64}$/i.test(a || "") || !/^[a-f0-9]{64}$/i.test(b || "")) return false;
+    return crypto.timingSafeEqual(Buffer.from(a, "hex"), Buffer.from(b, "hex"));
+}
+
+function resetRequestLimit(ip) {
+    const now = Date.now();
+    if (passwordResetIpWindows.size > 5000) {
+        for (const [key, window] of passwordResetIpWindows) {
+            if (now - window.startedAt >= 60 * 60 * 1000) passwordResetIpWindows.delete(key);
+        }
+    }
+    const window = passwordResetIpWindows.get(ip);
+    if (!window || now - window.startedAt >= 60 * 60 * 1000) {
+        passwordResetIpWindows.set(ip, { startedAt: now, count: 1 });
+        return false;
+    }
+    window.count += 1;
+    return window.count > 12;
+}
+
+async function sendPasswordResetEmail(email, code) {
+    const apiKey = process.env.BREVO_API_KEY;
+    const senderEmail = process.env.BREVO_SENDER_EMAIL;
+    if (!apiKey || !senderEmail) throw new Error("Brevo is not configured.");
+
+    const senderName = process.env.BREVO_SENDER_NAME || "Araullo University South Student Council";
+    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        signal: AbortSignal.timeout(10000),
+        headers: { accept: "application/json", "api-key": apiKey, "content-type": "application/json" },
+        body: JSON.stringify({
+            sender: { name: senderName, email: senderEmail },
+            to: [{ email }],
+            subject: "Your student council portal password reset code",
+            htmlContent: `<html><body style="margin:0;background:#f5f7fa;padding:32px;font-family:Arial,sans-serif;color:#172338"><div style="max-width:520px;margin:auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:32px"><p style="margin:0 0 8px;color:#8a5e0b;font-size:12px;font-weight:bold;letter-spacing:2px">PASSWORD RESET</p><h1 style="margin:0 0 18px;font-size:24px">Your verification code</h1><p style="color:#64748b;line-height:1.6">Enter this code to reset your student council portal password. It expires in 10 minutes.</p><div style="margin:24px 0;padding:16px;background:#f5f7fa;border-radius:12px;text-align:center;font-size:32px;font-weight:bold;letter-spacing:10px;color:#0b1f3a">${code}</div><p style="color:#64748b;font-size:13px">If you did not request this code, you can ignore this email.</p></div></body></html>`,
+            textContent: `Your password reset code is ${code}. It expires in 10 minutes. If you did not request this code, ignore this email.`
+        })
+    });
+
+    if (!response.ok) {
+        console.error(`Brevo password reset email failed with status ${response.status}.`);
+        throw new Error("Brevo rejected the email request.");
+    }
+}
+
+app.get("/api/health", (_req, res) => {
+    if (!databaseReady) return fail(res, 503, "MongoDB is not connected.", { status: "not_ready", database: "mongodb" });
+    return ok(res, null, { status: "ready", database: "mongodb" });
+});
+
+// Authentication
+app.post("/api/auth/register", async (req, res, next) => {
+    const studentId = text(req.body.student_id).trim();
+    const first = text(req.body.first_name).trim();
+    const last = text(req.body.last_name).trim();
+    const email = text(req.body.email).trim().toLowerCase();
+    const password = text(req.body.password);
+    const course = text(req.body.course).trim();
+    const year = text(req.body.year_level).trim();
+    if (![studentId, first, last, email, password, course, year].every(Boolean)) return fail(res, 422, "Please complete all required fields.");
+    if (!studentIdPattern.test(studentId)) return fail(res, 422, "Student ID must use the format 01-1234-123456.");
+    if (!/^[^\s@]+@phinmaed\.com$/i.test(email)) return fail(res, 422, "Please use your @phinmaed.com email address.");
+    if (password.length < 8) return fail(res, 422, "Password must be at least 8 characters.");
+    try {
+        const user = {
+            id: await nextId("users"), student_id: studentId, first_name: first, last_name: last,
+            email, passwordHash: await bcrypt.hash(password, 12), course, year_level: year,
+            role: "student", created_at: new Date()
+        };
+        await collections.users.insertOne(user);
+        return ok(res, "Account created successfully.");
+    } catch (error) {
+        if (duplicateKey(error)) return fail(res, 409, "A student account with that ID or email already exists.");
+        return next(error);
+    }
+});
+
+app.post("/api/auth/login", async (req, res, next) => {
+    const identifier = text(req.body.email || req.body.identifier).trim();
+    const password = text(req.body.password);
+    if (!identifier || !password) return fail(res, 422, "Please enter your email or student ID and password.");
+    if (identifier.includes("@") && !/^[^\s@]+@phinmaed\.com$/i.test(identifier)) return fail(res, 422, "Please use your @phinmaed.com email address.");
+    if (!identifier.includes("@") && !studentIdPattern.test(identifier)) return fail(res, 422, "Student ID must use the format 01-1234-123456.");
+    try {
+        const user = await collections.users.findOne({
+            $or: [
+                { email: identifier.toLowerCase() },
+                { student_id: identifier }
+            ]
+        });
+        if (!user || !(await bcrypt.compare(password, String(user.passwordHash || "").replace(/^\$2y\$/, "$2a$")))) {
+            return fail(res, 401, "Invalid email or password.");
+        }
+        req.session.regenerate((error) => {
+            if (error) return next(error);
+            req.session.userId = Number(user.id);
+            req.session.role = user.role;
+            req.session.cookie.maxAge = req.body.remember_me ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+            return ok(res, "Login successful.", { user: publicUser(user) });
+        });
+    } catch (error) { return next(error); }
+});
+
+const resetRequestMessage = "If an account matches that PHINMA Education email, a verification code will be sent shortly.";
+
+app.post("/api/auth/forgot-password/request", async (req, res, next) => {
+    const email = text(req.body.email).trim().toLowerCase();
+    if (!/^[^\s@]+@phinmaed\.com$/i.test(email)) return fail(res, 422, "Use your @phinmaed.com email address.");
+    if (!process.env.BREVO_API_KEY || !process.env.BREVO_SENDER_EMAIL || (process.env.PASSWORD_RESET_SECRET || "").length < 32) return fail(res, 503, "Password reset is not configured. Set the Brevo API key, verified sender, and a 32-character PASSWORD_RESET_SECRET in backend/.env.");
+    if (resetRequestLimit(req.ip || req.socket.remoteAddress || "unknown")) return fail(res, 429, "Too many reset requests. Please try again later.");
+
+    try {
+        const user = await collections.users.findOne({ email });
+        if (!user) return ok(res, resetRequestMessage);
+
+        const now = new Date();
+        const existing = await collections.passwordResetOtps.findOne({ email });
+        const priorWindowStart = existing?.windowStartedAt ? new Date(existing.windowStartedAt) : null;
+        const sameWindow = priorWindowStart && now.getTime() - priorWindowStart.getTime() < 60 * 60 * 1000;
+        const windowStartedAt = sameWindow ? priorWindowStart : now;
+        const requestCount = sameWindow ? Number(existing.requestCount || 0) : 0;
+        const lastSentAt = existing?.lastSentAt ? new Date(existing.lastSentAt) : null;
+        if ((lastSentAt && now.getTime() - lastSentAt.getTime() < 60 * 1000) || requestCount >= 3) {
+            return ok(res, resetRequestMessage);
+        }
+
+        const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+        const codeHash = passwordResetDigest(email, code);
+        const expiresAt = new Date(windowStartedAt.getTime() + 60 * 60 * 1000);
+        await collections.passwordResetOtps.updateOne(
+            { email },
+            { $set: {
+                email, codeHash, attempts: 0, requestCount: requestCount + 1,
+                windowStartedAt, lastSentAt: now, codeExpiresAt: new Date(now.getTime() + 10 * 60 * 1000),
+                expiresAt, resetTokenHash: null, verifiedAt: null
+            } },
+            { upsert: true }
+        );
+
+        try {
+            await sendPasswordResetEmail(email, code);
+        } catch (emailError) {
+            console.error("Password reset email could not be sent:", emailError.message);
+            await collections.passwordResetOtps.updateOne(
+                { email, codeHash },
+                { $set: { requestCount, lastSentAt: new Date(now.getTime() - 60_001) }, $unset: { codeHash: "", codeExpiresAt: "" } }
+            );
+            return fail(res, 502, "The email could not be sent right now. Please try again later.");
+        }
+
+        return ok(res, resetRequestMessage);
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/auth/forgot-password/verify", async (req, res, next) => {
+    const email = text(req.body.email).trim().toLowerCase();
+    const code = text(req.body.code).trim();
+    if (!/^[^\s@]+@phinmaed\.com$/i.test(email) || !/^\d{6}$/.test(code)) return fail(res, 422, "Enter the PHINMA email and 6-digit code.");
+    if ((process.env.PASSWORD_RESET_SECRET || "").length < 32) return fail(res, 503, "Password reset is not configured. Set PASSWORD_RESET_SECRET in backend/.env.");
+    try {
+        const now = new Date();
+        const resetRecord = await collections.passwordResetOtps.findOne({ email, codeExpiresAt: { $gt: now } });
+        if (!resetRecord || resetRecord.attempts >= 5 || !safeDigestEqual(passwordResetDigest(email, code), resetRecord.codeHash)) {
+            if (resetRecord && resetRecord.attempts < 5) {
+                await collections.passwordResetOtps.updateOne({ _id: resetRecord._id, attempts: { $lt: 5 } }, { $inc: { attempts: 1 } });
+            }
+            return fail(res, 400, "That code is invalid or expired. Check it and try again.");
+        }
+
+        const resetToken = crypto.randomBytes(32).toString("base64url");
+        const updated = await collections.passwordResetOtps.updateOne(
+            { _id: resetRecord._id, codeHash: resetRecord.codeHash, attempts: { $lt: 5 }, codeExpiresAt: { $gt: now } },
+            { $set: { resetTokenHash: passwordResetDigest(email, resetToken), verifiedAt: now, codeExpiresAt: new Date(now.getTime() + 10 * 60 * 1000) }, $unset: { codeHash: "" } }
+        );
+        if (!updated.modifiedCount) return fail(res, 400, "That code is invalid or expired. Check it and try again.");
+        return ok(res, "Code verified. Set a new password.", { reset_token: resetToken });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/auth/forgot-password/reset", async (req, res, next) => {
+    const email = text(req.body.email).trim().toLowerCase();
+    const resetToken = text(req.body.reset_token);
+    const password = text(req.body.password);
+    if (!/^[^\s@]+@phinmaed\.com$/i.test(email) || !resetToken) return fail(res, 422, "Restart password recovery and verify your email code.");
+    if ((process.env.PASSWORD_RESET_SECRET || "").length < 32) return fail(res, 503, "Password reset is not configured. Set PASSWORD_RESET_SECRET in backend/.env.");
+    if (password.length < 8) return fail(res, 422, "Password must be at least 8 characters.");
+    try {
+        const now = new Date();
+        const record = await collections.passwordResetOtps.findOne({ email, codeExpiresAt: { $gt: now } });
+        if (!record || !record.resetTokenHash || !safeDigestEqual(passwordResetDigest(email, resetToken), record.resetTokenHash)) {
+            return fail(res, 400, "Your reset session expired. Request a new verification code.");
+        }
+        const claimed = await collections.passwordResetOtps.updateOne(
+            { _id: record._id, resetTokenHash: record.resetTokenHash, consumedAt: { $exists: false }, codeExpiresAt: { $gt: now } },
+            { $set: { consumedAt: now } }
+        );
+        if (!claimed.modifiedCount) return fail(res, 400, "Your reset session expired. Request a new verification code.");
+
+        await collections.users.updateOne({ email }, { $set: { passwordHash: await bcrypt.hash(password, 12), password_updated_at: now } });
+        await collections.passwordResetOtps.deleteOne({ _id: record._id });
+        return ok(res, "Your password has been reset. You can now sign in.");
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/auth/logout", (req, res, next) => {
+    req.session.destroy((error) => {
+        if (error) return next(error);
+        res.clearCookie("university_events.sid", { httpOnly: true, sameSite: "lax", secure: process.env.SESSION_COOKIE_SECURE === "true" });
+        return ok(res, "Logged out successfully.");
+    });
+});
+
+app.get("/api/auth/me", signedIn, async (req, res, next) => {
+    try {
+        const user = await collections.users.findOne({ id: Number(req.session.userId) });
+        if (!user) return fail(res, 401, "User not found.");
+        return ok(res, null, { user: publicUser(user) });
+    } catch (error) { return next(error); }
+});
+
+// Public event discovery
+app.get("/api/events/list", async (_req, res, next) => {
+    try {
+        const events = await collections.events.find({ status: { $ne: "cancelled" } }).sort({ start_date: -1 }).toArray();
+        return ok(res, null, { events: events.map(withEventStatus) });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/events/upcoming", async (_req, res, next) => {
+    try {
+        const event = await collections.events.findOne({ status: { $ne: "cancelled" }, end_date: { $gte: new Date() } }, { sort: { start_date: 1 } });
+        return ok(res, null, { event: event ? withEventStatus(event) : null });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/events/previous", async (_req, res, next) => {
+    try {
+        const events = await collections.events.find({ status: { $ne: "cancelled" }, end_date: { $lt: new Date() } }).sort({ start_date: -1 }).toArray();
+        return ok(res, null, { events: events.map((event) => ({ ...event, display_status: "completed" })) });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/events/event", async (req, res, next) => {
+    const id = Number(req.query.id);
+    if (!Number.isInteger(id) || id < 1) return fail(res, 422, "Event ID is required.");
+    try {
+        const event = await collections.events.findOne({ id, status: { $ne: "cancelled" } });
+        if (!event) return fail(res, 404, "Event not found.");
+        return ok(res, null, { event: withEventStatus(event) });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/events/highlights", async (req, res, next) => {
+    const eventId = Number(req.query.event_id);
+    if (!Number.isInteger(eventId) || eventId < 1) return fail(res, 422, "A valid event ID is required.");
+    try {
+        const highlights = await collections.event_highlights.find({ event_id: eventId }).sort({ created_at: -1 }).toArray();
+        return ok(res, null, { highlights });
+    } catch (error) { return next(error); }
+});
+
+// Event registration and member passes
+app.post("/api/registration/create", signedIn, async (req, res, next) => {
+    const eventId = Number(req.body.event_id);
+    if (!Number.isInteger(eventId) || eventId < 1) return fail(res, 422, "A valid event is required.");
+    if (req.session.role !== "student") return fail(res, 403, "Only student accounts can register for events.");
+    try {
+        const event = await collections.events.findOne({ id: eventId });
+        if (!event) return fail(res, 404, "Event not found.");
+        const now = new Date();
+        if (event.status === "cancelled" || event.start_date <= now || (event.registration_deadline && event.registration_deadline < now)) {
+            return fail(res, 422, "Registration for this event is closed.");
+        }
+        const reservation = await collections.events.updateOne(
+            {
+                id: eventId,
+                status: { $ne: "cancelled" },
+                start_date: { $gt: now },
+                $and: [
+                    { $or: [{ registration_deadline: null }, { registration_deadline: { $exists: false } }, { registration_deadline: { $gte: now } }] },
+                    { $or: [{ capacity: { $lte: 0 } }, { $expr: { $lt: [{ $ifNull: ["$registration_count", 0] }, "$capacity"] } }] }
+                ]
+            },
+            { $inc: { registration_count: 1 } }
+        );
+        if (!reservation.modifiedCount) {
+            const refreshed = await collections.events.findOne({ id: eventId });
+            if (refreshed && Number(refreshed.capacity) > 0 && Number(refreshed.registration_count || 0) >= Number(refreshed.capacity)) return fail(res, 409, "This event is already full.");
+            return fail(res, 422, "Registration for this event is closed.");
+        }
+        const code = registrationCode();
+        const registration = {
+            id: await nextId("registrations"), user_id: Number(req.session.userId), event_id: eventId,
+            registration_code: code, status: "registered", registered_at: new Date()
+        };
+        try {
+            await collections.registrations.insertOne(registration);
+        } catch (error) {
+            await collections.events.updateOne({ id: eventId }, { $inc: { registration_count: -1 } });
+            if (duplicateKey(error)) return fail(res, 409, "You are already registered for this event.");
+            throw error;
+        }
+        return ok(res, "Registration successful.", { registration_code: code });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/registration/my", signedIn, async (req, res, next) => {
+    try {
+        const registrations = await collections.registrations.find({ user_id: Number(req.session.userId) }).sort({ registered_at: -1 }).toArray();
+        const eventIds = registrations.map((registration) => registration.event_id);
+        const events = await collections.events.find({ id: { $in: eventIds } }).toArray();
+        const eventMap = new Map(events.map((event) => [event.id, event]));
+        const rows = registrations.map((registration) => {
+            const event = eventMap.get(registration.event_id);
+            if (!event) return null;
+            return {
+                registration_id: registration.id, registration_code: registration.registration_code,
+                status: registration.status, registered_at: registration.registered_at,
+                event_id: event.id, title: event.title, description: event.description,
+                location: event.location, start_date: event.start_date, end_date: event.end_date,
+                cover_image: event.cover_image, event_status: event.status
+            };
+        }).filter(Boolean);
+        return ok(res, null, { events: rows });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/registration/by-code", signedIn, async (req, res, next) => {
+    const code = text(req.query.code).trim();
+    if (!code) return fail(res, 422, "Registration code is required.");
+    try {
+        const registration = await collections.registrations.findOne({ registration_code: code, user_id: Number(req.session.userId) });
+        if (!registration) return fail(res, 404, "Registration not found.");
+        const [user, event] = await Promise.all([
+            collections.users.findOne({ id: registration.user_id }),
+            collections.events.findOne({ id: registration.event_id })
+        ]);
+        if (!user || !event) return fail(res, 404, "Registration not found.");
+        return ok(res, null, { registration: {
+            registration_id: registration.id, registration_code: registration.registration_code,
+            status: registration.status, registered_at: registration.registered_at,
+            student_id: user.student_id, first_name: user.first_name, last_name: user.last_name,
+            email: user.email, course: user.course, year_level: user.year_level,
+            event_id: event.id, title: event.title, description: event.description,
+            location: event.location, start_date: event.start_date, end_date: event.end_date,
+            cover_image: event.cover_image
+        } });
+    } catch (error) { return next(error); }
+});
+
+// Admin event and account management
+app.get("/api/admin/events", adminOnly, async (_req, res, next) => {
+    try {
+        const [events, eventCount, activeEventCount, registrationCount, studentCount] = await Promise.all([
+            collections.events.find({}).sort({ start_date: -1 }).toArray(),
+            collections.events.countDocuments({}),
+            collections.events.countDocuments({ status: { $in: ["upcoming", "ongoing"] } }),
+            collections.registrations.countDocuments({ status: { $ne: "cancelled" } }),
+            collections.users.countDocuments({ role: "student" })
+        ]);
+        const counts = await collections.registrations.aggregate([
+            { $match: { status: { $ne: "cancelled" } } },
+            { $group: { _id: "$event_id", total: { $sum: 1 } } }
+        ]).toArray();
+        const countMap = new Map(counts.map(({ _id, total }) => [_id, total]));
+        return ok(res, null, {
+            events: events.map((event) => ({ ...withEventStatus(event), registration_count: countMap.get(event.id) || 0 })),
+            stats: { event_count: eventCount, active_event_count: activeEventCount, registration_count: registrationCount, student_count: studentCount }
+        });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/admin/registrations", adminOnly, async (_req, res, next) => {
+    try {
+        const docs = await collections.registrations.find({}).sort({ registered_at: -1 }).limit(200).toArray();
+        const userIds = [...new Set(docs.map((doc) => doc.user_id))];
+        const eventIds = [...new Set(docs.map((doc) => doc.event_id))];
+        const [users, events, registrationCount] = await Promise.all([
+            collections.users.find({ id: { $in: userIds } }).toArray(),
+            collections.events.find({ id: { $in: eventIds } }).toArray(),
+            collections.registrations.countDocuments({ status: { $ne: "cancelled" } })
+        ]);
+        const userMap = new Map(users.map((user) => [user.id, user]));
+        const eventMap = new Map(events.map((event) => [event.id, event]));
+        const registrations = docs.map((registration) => {
+            const user = userMap.get(registration.user_id), event = eventMap.get(registration.event_id);
+            if (!user || !event) return null;
+            return {
+                registration_id: registration.id, registration_code: registration.registration_code,
+                status: registration.status, registered_at: registration.registered_at,
+                first_name: user.first_name, last_name: user.last_name, student_id: user.student_id,
+                email: user.email, event_title: event.title
+            };
+        }).filter(Boolean);
+        return ok(res, null, { registrations, registration_count: registrationCount });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/admin/users", adminOnly, async (_req, res, next) => {
+    try {
+        const [users, studentCount] = await Promise.all([
+            collections.users.find({}, { projection: { passwordHash: 0 } }).sort({ created_at: -1 }).limit(500).toArray(),
+            collections.users.countDocuments({ role: "student" })
+        ]);
+        return ok(res, null, { users, student_count: studentCount });
+    } catch (error) { return next(error); }
+});
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
+const imageMiddleware = (req, res, next) => upload.single("cover_image")(req, res, (error) => {
+    if (error) return fail(res, 422, "Choose an image smaller than 5 MB.");
+    next();
+});
+
+async function storeCover(file) {
+    if (!file) throw new Error("An event cover image is required.");
+    const type = await fileTypeFromBuffer(file.buffer);
+    const extensions = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+    const ext = type && extensions[type.mime];
+    if (!ext) throw new Error("Use a JPG, PNG, or WebP cover image.");
+    const directory = path.join(uploadRoot, "events");
+    await fs.mkdir(directory, { recursive: true });
+    const filename = `event-${crypto.randomBytes(12).toString("hex")}.${ext}`;
+    await fs.writeFile(path.join(directory, filename), file.buffer, { flag: "wx" });
+    return `/uploads/events/${filename}`;
+}
+
+function validateEventFields(body, creating) {
+    const title = text(body.title).trim(), description = text(body.description).trim(), location = text(body.location).trim();
+    const start = parseDate(body.start_date), end = parseDate(body.end_date);
+    const deadline = text(body.registration_deadline).trim() ? parseDate(body.registration_deadline) : null;
+    const capacity = Number(body.capacity), status = text(body.status || "upcoming");
+    if (!title || title.length > 255 || !description || !location || location.length > 255) return { error: "Enter a title, event description, and location." };
+    if (!start || !end || end <= start) return { error: "Enter valid start and end times; the end must be after the start." };
+    if (body.registration_deadline && (!deadline || deadline > start)) return { error: "The registration deadline must be valid and no later than the event start." };
+    if (!Number.isInteger(capacity) || capacity < 1) return { error: "Capacity must be at least one attendee." };
+    if (!(creating ? ["upcoming", "ongoing"] : ["upcoming", "ongoing", "completed", "cancelled"]).includes(status)) return { error: "Choose a valid event status." };
+    return { title, description, location, start_date: start, end_date: end, registration_deadline: deadline, capacity, status };
+}
+
+app.post("/api/admin/events/create", adminOnly, imageMiddleware, async (req, res, next) => {
+    const event = validateEventFields(req.body, true);
+    if (event.error) return fail(res, 422, event.error);
+    let cover;
+    try { cover = await storeCover(req.file); }
+    catch (error) { return fail(res, 422, error.message); }
+    try {
+        const id = await nextId("events");
+        await collections.events.insertOne({ id, ...event, cover_image: cover, registration_count: 0, created_at: new Date() });
+        return ok(res, "Event created successfully.", { event_id: id });
+    } catch (error) {
+        await fs.unlink(path.join(uploadRoot, cover.slice("/uploads/".length))).catch(() => {});
+        return next(error);
+    }
+});
+
+app.post("/api/admin/events/update", adminOnly, imageMiddleware, async (req, res, next) => {
+    const id = Number(req.query.id);
+    if (!Number.isInteger(id) || id < 1) return fail(res, 422, "A valid event ID is required.");
+    const event = validateEventFields(req.body, false);
+    if (event.error) return fail(res, 422, event.error);
+    try {
+        const existing = await collections.events.findOne({ id });
+        if (!existing) return fail(res, 404, "Event not found.");
+        const registrationCount = await collections.registrations.countDocuments({ event_id: id, status: { $ne: "cancelled" } });
+        if (event.capacity < registrationCount) return fail(res, 422, "Capacity cannot be lower than the existing attendee count.");
+        const cover = req.file ? await storeCover(req.file) : existing.cover_image;
+        await collections.events.updateOne({ id }, { $set: { ...event, cover_image: cover, registration_count: registrationCount } });
+        if (req.file && existing.cover_image !== cover) await removeLocalCover(existing.cover_image);
+        return ok(res, "Event updated successfully.", { event_id: id });
+    } catch (error) { return next(error); }
+});
+
+async function removeLocalCover(cover) {
+    if (!/^\/uploads\/events\/event-[a-f0-9]{24}\.(jpg|png|webp)$/.test(cover || "")) return;
+    const stillReferenced = await collections.events.countDocuments({ cover_image: cover });
+    if (!stillReferenced) await fs.unlink(path.join(uploadRoot, "events", path.basename(cover))).catch(() => {});
+}
+
+app.post("/api/admin/events/delete", adminOnly, async (req, res, next) => {
+    const id = Number(req.body.id);
+    if (!Number.isInteger(id) || id < 1) return fail(res, 422, "A valid event ID is required.");
+    try {
+        const event = await collections.events.findOne({ id });
+        if (!event) return fail(res, 404, "Event not found.");
+        const registrations = await collections.registrations.find({ event_id: id }, { projection: { id: 1 } }).toArray();
+        const registrationIds = registrations.map((registration) => registration.id);
+        await Promise.all([
+            collections.attendance.deleteMany({ registration_id: { $in: registrationIds } }),
+            collections.registrations.deleteMany({ event_id: id }),
+            collections.event_highlights.deleteMany({ event_id: id }),
+            collections.event_schedules.deleteMany({ event_id: id })
+        ]);
+        await collections.events.deleteOne({ id });
+        await removeLocalCover(event.cover_image);
+        return ok(res, "Event and its related records were removed.", { event_title: event.title, registrations_removed: registrations.length });
+    } catch (error) { return next(error); }
+});
+
+// Highlights
+app.get("/api/admin/highlights", adminOnly, async (_req, res, next) => {
+    try {
+        const highlights = await collections.event_highlights.find({}).sort({ created_at: -1 }).toArray();
+        const eventIds = [...new Set(highlights.map((highlight) => highlight.event_id))];
+        const events = await collections.events.find({ id: { $in: eventIds } }, { projection: { id: 1, title: 1 } }).toArray();
+        const eventMap = new Map(events.map((event) => [event.id, event.title]));
+        return ok(res, null, { highlights: highlights.map((highlight) => ({ ...highlight, event_title: eventMap.get(highlight.event_id) || "Deleted event" })) });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/highlights/create", adminOnly, async (req, res, next) => {
+    const eventId = Number(req.body.event_id), title = text(req.body.title).trim(), description = text(req.body.description).trim();
+    const mediaUrl = text(req.body.media_url).trim(), type = text(req.body.media_type || "image");
+    if (!Number.isInteger(eventId) || eventId < 1 || !title || title.length > 255 || !description || !mediaUrl || mediaUrl.length > 255) return fail(res, 422, "Complete the event, title, description, and media URL fields.");
+    if (!["image", "video"].includes(type)) return fail(res, 422, "Media type must be image or video.");
+    const isLocal = mediaUrl.startsWith("/uploads/highlights/") && !mediaUrl.includes("..");
+    let isWeb = false;
+    try { isWeb = ["http:", "https:"].includes(new URL(mediaUrl).protocol); } catch {}
+    if (!isLocal && !isWeb) return fail(res, 422, "Use an HTTP(S) URL or a path under /uploads/highlights/.");
+    try {
+        if (!await collections.events.findOne({ id: eventId }, { projection: { id: 1 } })) return fail(res, 404, "Event not found.");
+        const id = await nextId("event_highlights");
+        await collections.event_highlights.insertOne({ id, event_id: eventId, title, description, media_url: mediaUrl, media_type: type, created_at: new Date() });
+        return ok(res, "Highlight added.", { highlight_id: id });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/highlights/delete", adminOnly, async (req, res, next) => {
+    const id = Number(req.body.id);
+    if (!Number.isInteger(id) || id < 1) return fail(res, 422, "A valid highlight ID is required.");
+    try {
+        const result = await collections.event_highlights.deleteOne({ id });
+        if (!result.deletedCount) return fail(res, 404, "Highlight not found.");
+        return ok(res, "Highlight deleted.");
+    } catch (error) { return next(error); }
+});
+
+// Attendance check-in
+app.post("/api/attendance/checkin", adminOnly, async (req, res, next) => {
+    const code = text(req.body.registration_code).trim();
+    if (!code || code.length > 100) return fail(res, 422, "The QR code is empty or invalid.");
+    try {
+        const registration = await collections.registrations.findOne({ registration_code: code });
+        if (!registration) return fail(res, 404, "No registration matches this QR code.");
+        const [user, event] = await Promise.all([
+            collections.users.findOne({ id: registration.user_id }),
+            collections.events.findOne({ id: registration.event_id })
+        ]);
+        if (!user || !event) return fail(res, 404, "The registration data is incomplete.");
+        const attendee = { name: `${user.first_name} ${user.last_name}`, student_id: user.student_id, email: user.email, course: user.course, year_level: user.year_level };
+        const eventInfo = { title: event.title, location: event.location, start_date: event.start_date, end_date: event.end_date };
+        if (registration.status === "cancelled") return ok(res, "This registration was cancelled and cannot be checked in.", { success: false, attendee, event: eventInfo, registration_code: code, registration_status: "cancelled" });
+        if (registration.status === "attended") {
+            const priorAttendance = await collections.attendance.findOne({ registration_id: registration.id }, { sort: { time_in: -1 } });
+            return ok(res, "This student has already checked in.", { success: false, already_checked_in: true, attendee, event: eventInfo, registration_code: code, registration_status: "attended", time_in: priorAttendance?.time_in || null });
+        }
+        const update = await collections.registrations.updateOne({ id: registration.id, status: "registered" }, { $set: { status: "attended" } });
+        if (!update.modifiedCount) {
+            const latest = await collections.attendance.findOne({ registration_id: registration.id }, { sort: { time_in: -1 } });
+            return ok(res, "This student has already checked in.", { success: false, already_checked_in: true, attendee, event: eventInfo, registration_code: code, registration_status: "attended", time_in: latest?.time_in || null });
+        }
+        const timeIn = new Date();
+        await collections.attendance.insertOne({ id: await nextId("attendance"), registration_id: registration.id, time_in: timeIn, time_out: null });
+        return ok(res, "Registration verified. Attendance recorded.", { attendee, event: eventInfo, registration_code: code, registration_status: "attended", time_in: timeIn });
+    } catch (error) { return next(error); }
+});
+
+app.use((error, _req, res, _next) => {
+    if (res.headersSent) return;
+    console.error(error);
+    return fail(res, 500, "The request could not be completed. Please try again.");
+});
+
+async function connectDatabase() {
+    await mongoClient.connect();
+    db = mongoClient.db(databaseName);
+    collections = {
+        users: db.collection("users"), events: db.collection("events"),
+        registrations: db.collection("registrations"), attendance: db.collection("attendance"),
+        event_highlights: db.collection("event_highlights"), event_schedules: db.collection("event_schedules"),
+        passwordResetOtps: db.collection("password_reset_otps"),
+        sessions: db.collection("sessions"), counters: db.collection("counters")
+    };
+    await Promise.all([
+        collections.users.createIndex({ id: 1 }, { unique: true }),
+        collections.users.createIndex({ email: 1 }, { unique: true }),
+        collections.users.createIndex({ student_id: 1 }, { unique: true }),
+        collections.events.createIndex({ id: 1 }, { unique: true }),
+        collections.events.createIndex({ status: 1, start_date: 1 }),
+        collections.registrations.createIndex({ id: 1 }, { unique: true }),
+        collections.registrations.createIndex({ user_id: 1, event_id: 1 }, { unique: true }),
+        collections.registrations.createIndex({ registration_code: 1 }, { unique: true }),
+        collections.registrations.createIndex({ event_id: 1, status: 1 }),
+        collections.attendance.createIndex({ id: 1 }, { unique: true }),
+        collections.attendance.createIndex({ registration_id: 1, time_in: -1 }),
+        collections.event_highlights.createIndex({ id: 1 }, { unique: true }),
+        collections.event_highlights.createIndex({ event_id: 1, created_at: -1 }),
+        collections.event_schedules.createIndex({ id: 1 }, { unique: true }),
+        collections.event_schedules.createIndex({ event_id: 1 }),
+        collections.passwordResetOtps.createIndex({ email: 1 }, { unique: true }),
+        collections.passwordResetOtps.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+        collections.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 })
+    ]);
+    sessionStore.collection = collections.sessions;
+    databaseReady = true;
+}
+
+async function start() {
+    await connectDatabase();
+    const server = app.listen(port, () => console.log(`University events API connected to MongoDB (${databaseName}) at http://localhost:${port}`));
+    const shutdown = async () => {
+        server.close(async () => {
+            databaseReady = false;
+            await mongoClient.close();
+            process.exit(0);
+        });
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+}
+
+start().catch(async (error) => {
+    console.error(`MongoDB connection failed for database "${databaseName}":`, error.message);
+    console.error("Start MongoDB or set MONGODB_URI in backend/.env, then restart the API.");
+    await mongoClient.close().catch(() => {});
+    process.exitCode = 1;
+});

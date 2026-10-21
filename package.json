@@ -1,0 +1,12 @@
+{
+  "name": "university-events-platform",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "dev:api": "npm --prefix backend run dev",
+    "dev:web": "npm --prefix frontend run dev",
+    "check:api": "npm --prefix backend run check",
+    "build": "npm --prefix frontend run build"
+  }
+}

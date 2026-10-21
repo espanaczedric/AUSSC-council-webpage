@@ -173,7 +173,7 @@ function QRScanner() {
         setVerifying(true);
 
         try {
-            const data = await apiRequest("/attendance/checkin.php", {
+            const data = await apiRequest("/attendance/checkin", {
                 method: "POST",
                 credentials: "include",
                 body: JSON.stringify({ registration_code: registrationCode })

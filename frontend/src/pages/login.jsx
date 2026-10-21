@@ -1,164 +1,145 @@
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
+import AuthLayout from "../components/AuthLayout";
 import { apiRequest } from "../services/api";
 
 function Login() {
     const navigate = useNavigate();
-
-    const [email, setEmail] = useState("");
+    const [searchParams] = useSearchParams();
+    const [identifier, setIdentifier] = useState("");
     const [password, setPassword] = useState("");
+    const [rememberMe, setRememberMe] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+    const [databaseStatus, setDatabaseStatus] = useState("checking");
+
+    useEffect(() => {
+        let active = true;
+        apiRequest("/health")
+            .then((data) => {
+                if (active) setDatabaseStatus(data.database === "mongodb" && data.status === "ready" ? "connected" : "unavailable");
+            })
+            .catch(() => {
+                if (active) setDatabaseStatus("unavailable");
+            });
+        return () => { active = false; };
+    }, []);
 
     async function handleSubmit(event) {
         event.preventDefault();
-
+        const normalizedIdentifier = identifier.trim();
+        const isPhinmaEmail = /^[^\s@]+@phinmaed\.com$/i.test(normalizedIdentifier);
+        const isStudentId = /^01-\d{4}-\d{6}$/.test(normalizedIdentifier);
+        if (!isPhinmaEmail && !isStudentId) {
+            setError("Use your @phinmaed.com email or a student ID in 01-1234-123456 format.");
+            return;
+        }
         setLoading(true);
+        setError("");
 
         try {
-            const data = await apiRequest("/auth/login.php", {
+            const data = await apiRequest("/auth/login", {
                 method: "POST",
                 credentials: "include",
-                body: JSON.stringify({
-                    email: email,
-                    password: password
-                })
+                body: JSON.stringify({ email: normalizedIdentifier, password, remember_me: rememberMe })
             });
 
             if (!data.success) {
-                alert(data.message);
+                setError(data.message || "Check your email or student ID and password, then try again.");
                 return;
             }
 
-            // Save logged-in user
-            localStorage.setItem(
-                "user",
-                JSON.stringify(data.user)
-            );
+            localStorage.setItem("user", JSON.stringify(data.user));
+            window.dispatchEvent(new Event("auth-change"));
 
-            window.dispatchEvent(
-                new Event("auth-change")
-            );
-
-            // Redirect based on role
-            if (data.user.role === "admin") {
-                navigate("/admin");
-            } else {
-                navigate("/my-events");
-            }
-
-        } catch (error) {
-            console.error("Login error:", error);
-
-            alert(
-                "Unable to connect to the server. Please make sure XAMPP and the PHP backend are running."
-            );
-
+            const requestedPath = searchParams.get("next");
+            const nextPath = requestedPath?.startsWith("/") && !requestedPath.startsWith("//") ? requestedPath : null;
+            if (nextPath && data.user.role !== "admin") navigate(nextPath);
+            else if (data.user.role === "admin") navigate("/admin");
+            else navigate("/my-events");
+        } catch (requestError) {
+            console.error("Login error:", requestError);
+            setError(requestError.message || "Unable to connect. Check your connection and try again.");
         } finally {
             setLoading(false);
         }
     }
 
     return (
-        <main className="login-page">
-
-            <section className="login-container">
-
-                <Link to="/" className="form-back-link">
-                    <span aria-hidden="true">←</span>
-                    Back to Home
-                </Link>
-
-                {/* HEADER */}
-                <div className="login-header">
-
-                    <span>
-                        UNIVERSITY EVENTS
-                    </span>
-
-                    <h1>
-                        Welcome Back
-                    </h1>
-
-                    <p>
-                        Sign in to manage your
-                        event registrations.
+        <AuthLayout>
+                    <h1>Welcome back</h1>
+                    <p className="login-panel-intro">Sign in to continue to your campus events and registrations.</p>
+                    <p className={`login-db-status is-${databaseStatus}`} role="status" aria-live="polite">
+                        <span aria-hidden="true" />
+                        {databaseStatus === "checking" && "Checking sign-in service…"}
+                        {databaseStatus === "connected" && "Sign-in service connected"}
+                        {databaseStatus === "unavailable" && "Sign-in service unavailable. Check that MongoDB and the API are running."}
                     </p>
 
-                </div>
+                    <form className="login-form login-redesign-form" onSubmit={handleSubmit}>
+                        {error && <p className="form-message is-error" role="alert">{error}</p>}
 
+                        <label htmlFor="login-identifier">Email or student ID</label>
+                        <input
+                            id="login-identifier"
+                            type="text"
+                            name="identifier"
+                            placeholder="name.au@phinmaed.com or 01-1234-123456"
+                            value={identifier}
+                            autoComplete="username"
+                            onChange={(event) => setIdentifier(event.target.value)}
+                            required
+                        />
 
-                {/* LOGIN FORM */}
-                <form
-                    className="login-form"
-                    onSubmit={handleSubmit}
-                >
+                        <label htmlFor="login-password">Password</label>
+                        <div className="login-password-wrap">
+                            <input
+                                id="login-password"
+                                type={showPassword ? "text" : "password"}
+                                name="password"
+                                placeholder="Enter your password"
+                                value={password}
+                                autoComplete="current-password"
+                                onChange={(event) => setPassword(event.target.value)}
+                                required
+                            />
+                            <button
+                                className="login-password-toggle"
+                                type="button"
+                                aria-label={showPassword ? "Hide password" : "Show password"}
+                                aria-pressed={showPassword}
+                                onClick={() => setShowPassword((visible) => !visible)}
+                            >
+                                {showPassword ? (
+                                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8" /><path d="M9.9 5.2A10.7 10.7 0 0 1 12 5c5.2 0 8.6 5.1 9.5 7-.4.8-1.3 2.1-2.7 3.4M6.2 6.2C3.9 7.7 2.7 10 2.5 12c.4.8 1.5 2.6 3.4 4.2A9.9 9.9 0 0 0 12 19c1.2 0 2.3-.2 3.3-.6" /></svg>
+                                ) : (
+                                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-7 9.5-7 9.5 7 9.5 7-3.4 7-9.5 7-9.5-7-9.5-7Z" /><circle cx="12" cy="12" r="2.5" /></svg>
+                                )}
+                            </button>
+                        </div>
 
-                    {/* EMAIL */}
-                    <label htmlFor="email">
-                        Email
-                    </label>
+                        <div className="login-form-options">
+                            <label className="login-remember">
+                                <input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} />
+                                <span>Remember me for 30 days</span>
+                            </label>
+                            <span className="login-help-text">Need help? Contact the Student Council.</span>
+                        </div>
 
-                    <input
-                        id="email"
-                        type="email"
-                        name="email"
-                        placeholder="Enter your email"
-                        value={email}
-                        onChange={(event) =>
-                            setEmail(event.target.value)
-                        }
-                        required
-                    />
+                        <button type="submit" disabled={loading}>
+                            {loading ? "Signing in…" : "Sign in"}
+                        </button>
+                    </form>
 
-
-                    {/* PASSWORD */}
-                    <label htmlFor="password">
-                        Password
-                    </label>
-
-                    <input
-                        id="password"
-                        type="password"
-                        name="password"
-                        placeholder="Enter your password"
-                        value={password}
-                        onChange={(event) =>
-                            setPassword(event.target.value)
-                        }
-                        required
-                    />
-
-
-                    {/* SUBMIT */}
-                    <button
-                        type="submit"
-                        disabled={loading}
-                    >
-                        {loading
-                            ? "Signing in..."
-                            : "Sign In"}
-                    </button>
-
-                </form>
-
-
-                {/* REGISTER LINK */}
-                <div className="login-footer">
-
-                    <p>
-                        Don't have an account?
-                    </p>
-
-                    <Link to="/register-account">
-                        Create an account
-                    </Link>
-
-                </div>
-
-            </section>
-
-        </main>
+                    <div className="login-account-prompt">
+                        <span>New to the portal?</span>
+                        <Link to="/register-account">Create an account</Link>
+                    </div>
+                    <Link className="login-forgot-link" to="/forgot-password">Forgot password?</Link>
+                    <p className="login-terms">By signing in, you agree to use this portal responsibly.</p>
+        </AuthLayout>
     );
 }
 

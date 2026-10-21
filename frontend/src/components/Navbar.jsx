@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { logoutUser } from "../services/api";
 
@@ -28,6 +28,39 @@ function getUserInitials(user) {
     return (first + last).toUpperCase() || "U";
 }
 
+function NavigationIcon({ name }) {
+    const shared = {
+        width: 20,
+        height: 20,
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: 1.8,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        "aria-hidden": "true"
+    };
+
+    const paths = {
+        home: <><path d="m3 10 9-7 9 7" /><path d="M5 9v11h14V9" /><path d="M9 20v-6h6v6" /></>,
+        events: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>,
+        updates: <><path d="M4 11v2a2 2 0 0 0 2 2h2l8 5V4l-8 5H6a2 2 0 0 0-2 2Z" /><path d="m8 15 2 6M19 9l2-2M19 15l2 2" /></>,
+        committees: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="10" cy="7" r="4" /><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
+        about: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></>
+    };
+
+    return <svg {...shared}>{paths[name]}</svg>;
+}
+
+function AccountIcon() {
+    return (
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="8" r="4" />
+            <path d="M4 21a8 8 0 0 1 16 0" />
+        </svg>
+    );
+}
+
 
 /*
 |--------------------------------------------------------------------------
@@ -37,16 +70,48 @@ function getUserInitials(user) {
 
 function Navbar() {
     const navigate = useNavigate();
+    const location = useLocation();
 
     const [menuOpen, setMenuOpen] = useState(false);
     const [user, setUser] = useState(getStoredUser);
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [detailsVisible, setDetailsVisible] = useState(false);
     const [loggingOut, setLoggingOut] = useState(false);
+    const [isHidden, setIsHidden] = useState(false);
 
     const menuButtonRef = useRef(null);
+    const navRef = useRef(null);
     const dropdownRef = useRef(null);
     const avatarRef = useRef(null);
+    const lastScrollPositionRef = useRef(0);
+
+    useEffect(() => {
+        setMenuOpen(false);
+        setDropdownOpen(false);
+        setDetailsVisible(false);
+    }, [location.pathname]);
+
+    useEffect(() => {
+        lastScrollPositionRef.current = window.scrollY;
+
+        function handleScroll() {
+            const currentPosition = Math.max(0, window.scrollY);
+            const previousPosition = lastScrollPositionRef.current;
+            const activeElement = document.activeElement;
+            const navigationHasFocus = navRef.current?.contains(activeElement);
+
+            if (menuOpen || dropdownOpen || navigationHasFocus || currentPosition < 36) {
+                setIsHidden(false);
+            } else if (Math.abs(currentPosition - previousPosition) > 7) {
+                setIsHidden(currentPosition > previousPosition && currentPosition > 105);
+            }
+
+            lastScrollPositionRef.current = currentPosition;
+        }
+
+        window.addEventListener("scroll", handleScroll, { passive: true });
+        return () => window.removeEventListener("scroll", handleScroll);
+    }, [menuOpen, dropdownOpen]);
 
 
     /*
@@ -74,15 +139,29 @@ function Navbar() {
     useEffect(() => {
         if (!menuOpen) return undefined;
 
+        function handlePointerDown(event) {
+            if (navRef.current && !navRef.current.contains(event.target)) {
+                setMenuOpen(false);
+                setDropdownOpen(false);
+                setDetailsVisible(false);
+            }
+        }
+
         function handleKeyDown(event) {
             if (event.key === "Escape") {
                 setMenuOpen(false);
+                setDropdownOpen(false);
+                setDetailsVisible(false);
                 menuButtonRef.current?.focus();
             }
         }
 
+        document.addEventListener("pointerdown", handlePointerDown);
         document.addEventListener("keydown", handleKeyDown);
-        return () => document.removeEventListener("keydown", handleKeyDown);
+        return () => {
+            document.removeEventListener("pointerdown", handlePointerDown);
+            document.removeEventListener("keydown", handleKeyDown);
+        };
     }, [menuOpen]);
 
 
@@ -155,7 +234,10 @@ function Navbar() {
 
 
     return (
-        <nav className="navbar" aria-label="Main navigation">
+        <>
+        <div className="navbar-spacer" aria-hidden="true" />
+        <nav ref={navRef} className={`navbar${isHidden ? " is-hidden" : ""}`} aria-label="Main navigation">
+            <div className="navbar-container">
 
             {/* ---- LOGO ---- */}
             <div className="navbar-logo">
@@ -176,7 +258,11 @@ function Navbar() {
                 aria-label={menuOpen ? "Close navigation menu" : "Open navigation menu"}
                 aria-expanded={menuOpen}
                 aria-controls="primary-navigation"
-                onClick={() => setMenuOpen((open) => !open)}
+                onClick={() => {
+                    setMenuOpen((open) => !open);
+                    setDropdownOpen(false);
+                    setDetailsVisible(false);
+                }}
             >
                 <span />
                 <span />
@@ -189,26 +275,33 @@ function Navbar() {
                 className={`navbar-links${menuOpen ? " is-open" : ""}`}
                 id="primary-navigation"
             >
-                <NavLink to="/" onClick={() => setMenuOpen(false)}>
-                    Home
-                </NavLink>
-                <NavLink to="/events" onClick={() => setMenuOpen(false)}>
-                    Events
-                </NavLink>
-                <NavLink to="/my-events" onClick={() => setMenuOpen(false)}>
-                    My Events
-                </NavLink>
+                <div className="navbar-primary-links">
+                    {[
+                        { label: "Home", to: "/", icon: "home", end: true },
+                        { label: "Events", to: "/events", icon: "events" },
+                        { label: "Updates", to: "/announcements", icon: "updates" },
+                        { label: "Committees", to: "/committees", icon: "committees" },
+                        { label: "About", to: "/about", icon: "about" }
+                    ].map(({ label, to, icon, end }) => (
+                        <NavLink key={to} to={to} end={end} title={label} aria-label={label} onClick={() => setMenuOpen(false)}>
+                            <NavigationIcon name={icon} />
+                            <span className="navbar-link-label">{label}</span>
+                        </NavLink>
+                    ))}
+                </div>
 
+                <div className="navbar-actions">
+                    {user?.role === "admin" ? (
+                        <NavLink className="navbar-workspace-link" to="/admin" onClick={() => setMenuOpen(false)}>
+                            Admin workspace
+                        </NavLink>
+                    ) : user ? (
+                        <NavLink className="navbar-workspace-link" to="/my-events" onClick={() => setMenuOpen(false)}>
+                            My registrations
+                        </NavLink>
+                    ) : null}
 
                 {/* ---- LOGIN / AVATAR ---- */}
-                {!user ? (
-
-                    <NavLink to="/login" onClick={() => setMenuOpen(false)}>
-                        Login
-                    </NavLink>
-
-                ) : (
-
                     <div className="navbar-user-wrapper">
 
                         {/* AVATAR BUTTON */}
@@ -216,12 +309,12 @@ function Navbar() {
                             ref={avatarRef}
                             type="button"
                             className="navbar-avatar"
-                            aria-label="Account menu"
+                            aria-label={user ? "Account menu" : "Sign in and account options"}
                             aria-expanded={dropdownOpen}
                             aria-haspopup="true"
                             onClick={toggleDropdown}
                         >
-                            {getUserInitials(user)}
+                            {user ? getUserInitials(user) : <AccountIcon />}
                         </button>
 
 
@@ -235,6 +328,7 @@ function Navbar() {
                                 aria-label="Account"
                             >
 
+                                {user ? <>
                                 {/* ---- HEADER ---- */}
                                 <div className="navbar-dropdown-header">
                                     <div className="navbar-dropdown-avatar">
@@ -366,17 +460,25 @@ function Navbar() {
                                     {loggingOut ? "Signing out…" : "Log Out"}
                                 </button>
 
+                                </> : <div className="navbar-account-guest">
+                                    <strong>Welcome</strong>
+                                    <span>Sign in to manage your registrations.</span>
+                                    <Link className="navbar-dropdown-item" to="/login" onClick={() => { setDropdownOpen(false); setMenuOpen(false); }}>Sign in</Link>
+                                    <Link className="navbar-dropdown-item" to="/register-account" onClick={() => { setDropdownOpen(false); setMenuOpen(false); }}>Create an account</Link>
+                                </div>}
+
                             </div>
 
                         )}
 
                     </div>
 
-                )}
-
+            </div>
             </div>
 
+            </div>
         </nav>
+        </>
     );
 }
 

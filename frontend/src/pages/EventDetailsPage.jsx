@@ -111,9 +111,9 @@ function EventDetailsPage() {
                     <div className="event-details-overlay">
 
                         <span>
-                            {event.status === "ongoing"
+                            {(event.display_status || event.status) === "ongoing"
                                 ? "HAPPENING NOW"
-                                : event.status.toUpperCase()}
+                                : (event.display_status || event.status).toUpperCase()}
                         </span>
 
                         <h1>
@@ -139,7 +139,7 @@ function EventDetailsPage() {
 
                         <div className="event-actions">
 
-                            {event.status !== "completed" &&
+                            {(event.display_status || event.status) !== "completed" &&
                              event.status !== "cancelled" && (
 
                                 <Link
