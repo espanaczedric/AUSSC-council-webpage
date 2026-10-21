@@ -1,6 +1,6 @@
 # University events API
 
-The Express API uses MongoDB for application data and login sessions. The React app calls `http://localhost:3000/api` by default. The API waits for MongoDB before listening, and `/api/health` reports connection status.
+The Express API uses MongoDB for application data and login sessions. The React app calls `http://localhost:3000/api` by default. The API listens while MongoDB is unavailable, reports the database state at `/api/health`, and retries its MongoDB connection with backoff.
 
 ## Start locally
 
@@ -26,3 +26,5 @@ The command creates the admin account or updates the matching email/student ID. 
 ## Production
 
 Use HTTPS, set `SESSION_COOKIE_SECURE=true`, configure `FRONTEND_ORIGINS`, use a long random `SESSION_SECRET`, and set the frontend's `VITE_API_URL` to the deployed API base ending in `/api`. Store uploads on persistent storage in production.
+
+For Atlas connectivity, add the **backend host's outbound public IP** to Atlas Network Access and allow outbound TCP traffic on ports `27015`–`27017`. If the backend runs on a hosting platform, adding a developer's laptop IP will not allow the deployed backend unless that platform routes outbound traffic through the same address. Check `/api/health` from the deployed frontend's API URL after changing the network settings.

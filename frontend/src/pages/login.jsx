@@ -14,15 +14,23 @@ function Login() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [databaseStatus, setDatabaseStatus] = useState("checking");
+    const [databaseDetail, setDatabaseDetail] = useState("");
 
     useEffect(() => {
         let active = true;
         async function checkDatabase() {
             try {
                 const data = await apiRequest("/health");
-                if (active) setDatabaseStatus(data.database === "mongodb" && data.status === "ready" ? "connected" : "unavailable");
+                if (active) {
+                    const ready = data.database === "mongodb" && data.status === "ready";
+                    setDatabaseStatus(ready ? "connected" : "unavailable");
+                    setDatabaseDetail(ready ? "" : data.message || "The database is not ready yet.");
+                }
             } catch (error) {
-                if (active) setDatabaseStatus(error.code === "API_URL_NOT_CONFIGURED" ? "misconfigured" : "unavailable");
+                if (active) {
+                    setDatabaseStatus(error.code === "API_URL_NOT_CONFIGURED" ? "misconfigured" : "unavailable");
+                    setDatabaseDetail(error.status === 503 ? error.message : "Could not reach the sign-in API. Check its deployment URL and availability.");
+                }
             }
         }
         void checkDatabase();
@@ -67,8 +75,12 @@ function Login() {
             console.error("Login error:", requestError);
             if (requestError.status >= 500 || requestError.code?.startsWith("DATABASE_")) {
                 setDatabaseStatus("unavailable");
+                setDatabaseDetail(requestError.message || "The database is temporarily unavailable.");
             }
-            if (requestError.code === "API_URL_NOT_CONFIGURED") setDatabaseStatus("misconfigured");
+            if (requestError.code === "API_URL_NOT_CONFIGURED") {
+                setDatabaseStatus("misconfigured");
+                setDatabaseDetail("");
+            }
             const message = requestError.message || "Unable to connect. Check your connection and try again.";
             setError(requestError.requestId ? `${message} (Reference: ${requestError.requestId})` : message);
         } finally {
@@ -84,7 +96,7 @@ function Login() {
                         <span aria-hidden="true" />
                         {databaseStatus === "checking" && "Checking sign-in service…"}
                         {databaseStatus === "connected" && "Sign-in database ready"}
-                        {databaseStatus === "unavailable" && "Sign-in API or database is unavailable."}
+                        {databaseStatus === "unavailable" && (databaseDetail || "Sign-in API or database is unavailable.")}
                         {databaseStatus === "misconfigured" && "Sign-in API is not configured for this deployment."}
                     </p>
 

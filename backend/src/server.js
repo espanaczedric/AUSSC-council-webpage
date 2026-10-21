@@ -20,7 +20,8 @@ const databaseName = process.env.MONGODB_DATABASE || "university_events";
 const allowedOrigins = (process.env.FRONTEND_ORIGINS || "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174")
     .split(",").map((origin) => origin.trim()).filter(Boolean);
 
-const mongoClient = new MongoClient(mongoUri, { serverSelectionTimeoutMS: Number(process.env.MONGODB_CONNECT_TIMEOUT_MS || 10000) });
+const mongoOptions = { serverSelectionTimeoutMS: Number(process.env.MONGODB_CONNECT_TIMEOUT_MS || 10000) };
+let mongoClient = new MongoClient(mongoUri, mongoOptions);
 let db;
 let collections;
 let databaseReady = false;
@@ -266,6 +267,18 @@ app.get("/api/health", async (_req, res, next) => {
         databaseReady = false;
         return next(error);
     }
+});
+
+// Keep API failures explicit while MongoDB is unavailable. This also avoids
+// downstream handlers dereferencing collections before the first connection.
+app.use("/api", (req, res, next) => {
+    if (databaseReady && collections) return next();
+    return fail(res, 503, "The database is temporarily unavailable. The API is retrying its MongoDB connection.", {
+        code: "DATABASE_UNAVAILABLE",
+        database: "mongodb",
+        status: "not_ready",
+        request_id: req.requestId
+    });
 });
 
 // Authentication
@@ -1476,8 +1489,12 @@ async function connectDatabase() {
 }
 
 async function start() {
-    await connectDatabase();
-    const server = app.listen(port, () => console.log(`University events API connected to MongoDB (${databaseName}) at http://localhost:${port}`));
+    const server = app.listen(port, () => console.log(`University events API listening at http://localhost:${port}`));
+    // Start listening immediately so health checks and login receive a useful
+    // 503 during an Atlas outage instead of a refused connection. Retry with
+    // bounded exponential backoff; once Atlas/network access is restored the
+    // normal routes become available without a manual process restart.
+    void connectWithRetry();
     const shutdown = async () => {
         server.close(async () => {
             databaseReady = false;
@@ -1489,9 +1506,26 @@ async function start() {
     process.on("SIGTERM", shutdown);
 }
 
-start().catch(async (error) => {
-    console.error(`MongoDB connection failed for database "${databaseName}":`, error.message);
-    console.error("Start MongoDB or set MONGODB_URI in backend/.env, then restart the API.");
-    await mongoClient.close().catch(() => {});
+async function connectWithRetry() {
+    let attempt = 0;
+    while (!databaseReady) {
+        try {
+            await connectDatabase();
+            console.log(`MongoDB connected (${databaseName}).`);
+            return;
+        } catch (error) {
+            databaseReady = false;
+            attempt += 1;
+            const delayMs = Math.min(30_000, 1_000 * (2 ** Math.min(attempt - 1, 5)));
+            console.error(`MongoDB connection attempt ${attempt} failed: ${error.message}`);
+            if (mongoClient) await mongoClient.close().catch(() => {});
+            mongoClient = new MongoClient(mongoUri, mongoOptions);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+    }
+}
+
+start().catch((error) => {
+    console.error("The API could not start:", error.message);
     process.exitCode = 1;
 });
