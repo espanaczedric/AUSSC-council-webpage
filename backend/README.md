@@ -1,12 +1,12 @@
 # University events API
 
-The Express API uses MongoDB for application data and login sessions. The React app calls `http://localhost:3000/api` by default. The API listens while MongoDB is unavailable, reports the database state at `/api/health`, and retries its MongoDB connection with backoff.
+The Express API uses MongoDB for application data, login sessions, and event cover images. The React app calls `http://localhost:3000/api` by default. The API listens while MongoDB is unavailable, reports the database state at `/api/health`, and retries its MongoDB connection with backoff. The same Express app is also exposed as a Vercel Function in production; the React app calls it at `/api` on the same domain.
 
 ## Start locally
 
 1. Start MongoDB locally or create a MongoDB Atlas database.
 2. Copy `backend/.env.example` to `backend/.env` and set `MONGODB_URI`, `MONGODB_DATABASE`, and a long random `SESSION_SECRET`.
-3. Install backend dependencies with `npm --prefix backend install`.
+3. Install all workspace dependencies from the repository root with `npm install`.
 4. Start both the API and frontend from the project root with `npm run dev`, or start only the API with `npm run dev:api`.
 
 ## Password reset email
@@ -23,8 +23,18 @@ npm --prefix backend run create:admin
 
 The command creates the admin account or updates the matching email/student ID. It does not install a default password.
 
-## Production
+## Vercel deployment (no separate Render service)
 
-Use HTTPS, set `SESSION_COOKIE_SECURE=true`, configure `FRONTEND_ORIGINS`, use a long random `SESSION_SECRET`, and set the frontend's `VITE_API_URL` to the deployed API base ending in `/api`. Store uploads on persistent storage in production.
+Set the Vercel project Root Directory to the repository root (`.`), then deploy using the checked-in `vercel.json`. The frontend uses the same-domain `/api` function in production, so it does not need a `VITE_API_URL` value. Add these backend environment variables in Vercel for Production and Preview as needed:
 
-For Atlas connectivity, add the **backend host's outbound public IP** to Atlas Network Access and allow outbound TCP traffic on ports `27015`–`27017`. If the backend runs on a hosting platform, adding a developer's laptop IP will not allow the deployed backend unless that platform routes outbound traffic through the same address. Check `/api/health` from the deployed frontend's API URL after changing the network settings.
+- `MONGODB_URI` — the Atlas connection URI.
+- `MONGODB_DATABASE` — the database name.
+- `MONGODB_MAX_POOL_SIZE=10` — keeps connection pools bounded across function instances.
+- `SESSION_SECRET` — a long, random secret.
+- `SESSION_COOKIE_SECURE=true`.
+- `PASSWORD_RESET_SECRET` — a separate random secret for password reset codes.
+- `BREVO_API_KEY` and `BREVO_SENDER_EMAIL` for password recovery email.
+
+Event cover images are stored in MongoDB GridFS on Vercel so they persist across function invocations. Locally, covers continue to use the `uploads` directory. Check `https://<your-vercel-domain>/api/health` after deployment.
+
+For Atlas connectivity, allow the **Vercel Function's outbound IP** in Atlas Network Access and allow outbound TCP traffic on ports `27015`–`27017`. Vercel's normal function egress uses changing IP addresses; Vercel Static IPs are available on Pro and Enterprise plans. Configure static egress for the project and add its assigned addresses to Atlas. Adding a developer's laptop IP does not authorize a deployed function unless it exits through that same address. Avoid opening Atlas to every IP as a workaround.

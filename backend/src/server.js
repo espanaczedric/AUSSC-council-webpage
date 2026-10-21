@@ -7,7 +7,7 @@ import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
 import session from "express-session";
-import { MongoClient } from "mongodb";
+import { GridFSBucket, MongoClient, ObjectId } from "mongodb";
 import multer from "multer";
 import { fileTypeFromBuffer } from "file-type";
 
@@ -17,28 +17,47 @@ const uploadRoot = path.resolve(process.env.UPLOAD_DIR || path.join(rootDir, "up
 const port = Number(process.env.PORT || 3000);
 const mongoUri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017";
 const databaseName = process.env.MONGODB_DATABASE || "university_events";
-const allowedOrigins = (process.env.FRONTEND_ORIGINS || "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174")
-    .split(",").map((origin) => origin.trim()).filter(Boolean);
+const allowedOrigins = [
+    ...(process.env.FRONTEND_ORIGINS || "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174").split(","),
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "",
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : ""
+].map((origin) => origin.trim()).filter(Boolean);
 
-const mongoOptions = { serverSelectionTimeoutMS: Number(process.env.MONGODB_CONNECT_TIMEOUT_MS || 10000) };
+const mongoOptions = {
+    serverSelectionTimeoutMS: Number(process.env.MONGODB_CONNECT_TIMEOUT_MS || 10000),
+    maxPoolSize: Number(process.env.MONGODB_MAX_POOL_SIZE || 10)
+};
 let mongoClient = new MongoClient(mongoUri, mongoOptions);
 let db;
 let collections;
+let eventCovers;
 let databaseReady = false;
+let databaseConnectionPromise;
 const passwordResetIpWindows = new Map();
 
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
-app.use(cors({
+app.use((req, res, next) => cors({
     origin(origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        const requestOrigin = `${req.protocol}://${req.get("host")}`;
+        let isLocalViteOrigin = false;
+        if (origin) {
+            try {
+                const parsedOrigin = new URL(origin);
+                const portNumber = Number(parsedOrigin.port);
+                isLocalViteOrigin = parsedOrigin.protocol === "http:" &&
+                    ["localhost", "127.0.0.1"].includes(parsedOrigin.hostname) &&
+                    portNumber >= 5173 && portNumber <= 5199;
+            } catch { /* Invalid origins are rejected below. */ }
+        }
+        if (!origin || origin === requestOrigin || allowedOrigins.includes(origin) || isLocalViteOrigin) return callback(null, true);
         return callback(new Error("Origin is not allowed."));
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
-}));
+})(req, res, next));
 app.use(express.json({ limit: "1mb" }));
 app.use((req, res, next) => {
     req.requestId = crypto.randomUUID();
@@ -88,10 +107,27 @@ app.use(session({
     cookie: {
         httpOnly: true,
         sameSite: "lax",
-        secure: process.env.SESSION_COOKIE_SECURE === "true",
+        secure: process.env.SESSION_COOKIE_SECURE === "true" || process.env.VERCEL === "1",
         maxAge: 24 * 60 * 60 * 1000
     }
 }));
+async function serveGridFsCover(req, res, next) {
+    if (process.env.VERCEL !== "1") return next();
+    const match = /^event-([a-f0-9]{24})\.(jpg|png|webp)$/.exec(req.params.filename);
+    if (!match) return fail(res, 404, "Image not found.");
+    try {
+        const fileId = new ObjectId(match[1]);
+        const file = await db.collection("event_covers.files").findOne({ _id: fileId });
+        if (!file) return fail(res, 404, "Image not found.");
+        res.setHeader("Content-Type", file.metadata?.contentType || "application/octet-stream");
+        res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+        const download = eventCovers.openDownloadStream(fileId);
+        download.on("error", next);
+        download.pipe(res);
+    } catch (error) { next(error); }
+}
+app.get("/api/uploads/events/:filename", serveGridFsCover);
+app.get("/uploads/events/:filename", serveGridFsCover);
 app.use("/uploads", express.static(uploadRoot, { fallthrough: false, index: false, maxAge: "1h" }));
 
 const text = (value) => value == null ? "" : String(value);
@@ -1171,9 +1207,9 @@ app.post("/api/admin/finance/save", councilAccess(["governor", "treasurer", "aud
     } catch (error) { return next(error); }
 });
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024, files: 1 } });
 const imageMiddleware = (req, res, next) => upload.single("cover_image")(req, res, (error) => {
-    if (error) return fail(res, 422, "Choose an image smaller than 5 MB.");
+    if (error) return fail(res, 422, "Choose an image smaller than 4 MB.");
     next();
 });
 
@@ -1183,6 +1219,19 @@ async function storeCover(file) {
     const extensions = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
     const ext = type && extensions[type.mime];
     if (!ext) throw new Error("Use a JPG, PNG, or WebP cover image.");
+    if (process.env.VERCEL === "1") {
+        const id = new ObjectId();
+        await new Promise((resolve, reject) => {
+            const stream = eventCovers.openUploadStreamWithId(id, `event-${id.toHexString()}.${ext}`, {
+                contentType: type.mime,
+                metadata: { contentType: type.mime }
+            });
+            stream.once("error", reject);
+            stream.once("finish", resolve);
+            stream.end(file.buffer);
+        });
+        return `/api/uploads/events/event-${id.toHexString()}.${ext}`;
+    }
     const directory = path.join(uploadRoot, "events");
     await fs.mkdir(directory, { recursive: true });
     const filename = `event-${crypto.randomBytes(12).toString("hex")}.${ext}`;
@@ -1264,7 +1313,13 @@ app.post("/api/admin/events/review", councilAccess(["governor"], false), async (
 async function removeLocalCover(cover) {
     if (!/^\/uploads\/events\/event-[a-f0-9]{24}\.(jpg|png|webp)$/.test(cover || "")) return;
     const stillReferenced = await collections.events.countDocuments({ cover_image: cover });
-    if (!stillReferenced) await fs.unlink(path.join(uploadRoot, "events", path.basename(cover))).catch(() => {});
+    if (stillReferenced) return;
+    if (process.env.VERCEL === "1") {
+        const id = new ObjectId(cover.match(/event-([a-f0-9]{24})/)[1]);
+        await eventCovers.delete(id).catch(() => {});
+        return;
+    }
+    await fs.unlink(path.join(uploadRoot, "events", path.basename(cover))).catch(() => {});
 }
 
 app.post("/api/admin/events/delete", councilAccess(["governor"]), async (req, res, next) => {
@@ -1433,6 +1488,7 @@ app.use((error, req, res, _next) => {
 async function connectDatabase() {
     await mongoClient.connect();
     db = mongoClient.db(databaseName);
+    eventCovers = new GridFSBucket(db, { bucketName: "event_covers" });
     collections = {
         users: db.collection("users"), events: db.collection("events"),
         registrations: db.collection("registrations"), attendance: db.collection("attendance"),
@@ -1506,11 +1562,24 @@ async function start() {
     process.on("SIGTERM", shutdown);
 }
 
+async function ensureDatabaseConnection() {
+    if (databaseReady && collections) return;
+    if (!databaseConnectionPromise) {
+        databaseConnectionPromise = connectDatabase().catch(async (error) => {
+            databaseReady = false;
+            await mongoClient.close().catch(() => {});
+            mongoClient = new MongoClient(mongoUri, mongoOptions);
+            throw error;
+        }).finally(() => { databaseConnectionPromise = undefined; });
+    }
+    return databaseConnectionPromise;
+}
+
 async function connectWithRetry() {
     let attempt = 0;
     while (!databaseReady) {
         try {
-            await connectDatabase();
+            await ensureDatabaseConnection();
             console.log(`MongoDB connected (${databaseName}).`);
             return;
         } catch (error) {
@@ -1518,14 +1587,30 @@ async function connectWithRetry() {
             attempt += 1;
             const delayMs = Math.min(30_000, 1_000 * (2 ** Math.min(attempt - 1, 5)));
             console.error(`MongoDB connection attempt ${attempt} failed: ${error.message}`);
-            if (mongoClient) await mongoClient.close().catch(() => {});
-            mongoClient = new MongoClient(mongoUri, mongoOptions);
             await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
     }
 }
 
-start().catch((error) => {
-    console.error("The API could not start:", error.message);
-    process.exitCode = 1;
-});
+async function vercelHandler(req, res) {
+    try {
+        await ensureDatabaseConnection();
+        return app(req, res);
+    } catch (error) {
+        console.error("Vercel API could not connect to MongoDB:", error.message);
+        return fail(res, 503, "The database is temporarily unavailable. Check the MongoDB Atlas network access and API environment settings.", {
+            code: "DATABASE_UNAVAILABLE",
+            database: "mongodb"
+        });
+    }
+}
+
+const isDirectExecution = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectExecution) {
+    start().catch((error) => {
+        console.error("The API could not start:", error.message);
+        process.exitCode = 1;
+    });
+}
+
+export default vercelHandler;

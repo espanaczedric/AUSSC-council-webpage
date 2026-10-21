@@ -15,7 +15,7 @@ function AdminDashboard() {
             .then(setOverview)
             .catch((requestError) => {
                 if (requestError.code === "API_URL_NOT_CONFIGURED") {
-                    setError("This frontend deployment is missing VITE_API_URL. In Vercel, add VITE_API_URL with your deployed backend address ending in /api, then redeploy the frontend.");
+                    setError("The API URL is not configured. Production uses the same-domain /api Vercel Function; confirm the project is deployed from the repository root.");
                     return;
                 }
                 if (requestError.status === 401) {

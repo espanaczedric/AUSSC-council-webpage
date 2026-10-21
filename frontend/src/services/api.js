@@ -1,5 +1,7 @@
 const configuredApiUrl = import.meta.env.VITE_API_URL?.trim();
-export const API_URL = (configuredApiUrl || (import.meta.env.DEV ? "http://localhost:3000/api" : "")).replace(/\/$/, "");
+// Production is deployed with the API function on the same Vercel domain.
+// Vite proxies local API and upload requests to Express, keeping browser calls same-origin.
+export const API_URL = (import.meta.env.DEV ? configuredApiUrl || "/api" : "/api").replace(/\/$/, "");
 
 const BACKEND_URL = API_URL.replace(/\/api\/?$/, "");
 
@@ -19,7 +21,7 @@ export function getEventImageUrl(path) {
 
 export async function apiRequest(path, options = {}) {
     if (!API_URL) {
-        const error = new Error("The sign-in API is not configured for this deployment. Set VITE_API_URL to your deployed API address ending in /api.");
+        const error = new Error("The sign-in API is not configured. Confirm the site is deployed with its /api Vercel Function.");
         error.code = "API_URL_NOT_CONFIGURED";
         throw error;
     }

@@ -299,7 +299,7 @@ function Navbar() {
                         </NavLink>
                     ) : user ? (
                         <NavLink className="navbar-workspace-link" to="/my-events" onClick={() => setMenuOpen(false)}>
-                            My registrations
+                            {user.council_position ? "Committee Assignment" : "My registrations"}
                         </NavLink>
                     ) : null}
 

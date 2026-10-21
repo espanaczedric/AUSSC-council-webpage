@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import AuthLayout from "../components/AuthLayout";
 import { apiRequest } from "../services/api";
 
 function Login() {
     const navigate = useNavigate();
-    const [searchParams] = useSearchParams();
     const [identifier, setIdentifier] = useState("");
     const [password, setPassword] = useState("");
     const [rememberMe, setRememberMe] = useState(false);
@@ -65,12 +64,9 @@ function Login() {
             localStorage.setItem("user", JSON.stringify(data.user));
             window.dispatchEvent(new Event("auth-change"));
 
-            const requestedPath = searchParams.get("next");
-            const nextPath = requestedPath?.startsWith("/") && !requestedPath.startsWith("//") ? requestedPath : null;
-            if (nextPath && data.user.role !== "admin") navigate(nextPath);
-            else if (data.user.role === "admin") navigate("/admin");
-            else if (data.user.council_position) navigate("/council");
-            else navigate("/my-events");
+            if (data.user.role === "admin") navigate("/admin", { replace: true });
+            else if (data.user.council_position) navigate("/my-events", { replace: true });
+            else navigate("/", { replace: true });
         } catch (requestError) {
             console.error("Login error:", requestError);
             if (requestError.status >= 500 || requestError.code?.startsWith("DATABASE_")) {
