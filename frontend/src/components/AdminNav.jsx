@@ -9,7 +9,8 @@ const links = [
     { label: "People", to: "/admin/users", icon: "people" },
     { label: "Highlights", to: "/admin/highlights", icon: "highlights" },
     { label: "Committees", to: "/admin/committees/executive", icon: "people" },
-    { label: "Finance", to: "/admin/finance", icon: "overview" }
+    { label: "Finance", to: "/admin/finance", icon: "overview" },
+    { label: "Council governance", to: "/council", icon: "events" }
 ];
 
 function AdminNavIcon({ name }) {

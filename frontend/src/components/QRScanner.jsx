@@ -6,7 +6,7 @@ import {
 
 import { apiRequest, getAdminAttendance, getAdminEvents } from "../services/api";
 
-function CameraScanner({ onDecoded, disabled = false }) {
+export function CameraScanner({ onDecoded, disabled = false, title = "Verify a registration", label = "Registration QR camera scanner" }) {
     const readerId = `qr-camera-${useId().replace(/:/g, "")}`;
     const scannerRef = useRef(null);
     const decodedRef = useRef(onDecoded);
@@ -81,9 +81,12 @@ function CameraScanner({ onDecoded, disabled = false }) {
                         if (scannerRef.current === scanner) {
                             scannerRef.current = null;
                         }
-                        decodedRef.current(decodedText);
+                        await decodedRef.current(decodedText);
+                        lockedRef.current = false;
+                        setCameraState("idle");
                     } catch {
                         setCameraError("The camera stopped unexpectedly. Please try again.");
+                        lockedRef.current = false;
                         setCameraState("idle");
                     }
                 },
@@ -105,11 +108,11 @@ function CameraScanner({ onDecoded, disabled = false }) {
     }
 
     return (
-        <section className="qr-camera-panel" aria-label="Registration QR camera scanner">
+        <section className="qr-camera-panel" aria-label={label}>
             <div className="qr-camera-heading">
                 <div>
                     <span>CAMERA SCANNER</span>
-                    <h2>Verify a registration</h2>
+                    <h2>{title}</h2>
                 </div>
                 <span className={`qr-camera-indicator is-${cameraState}`} role="status">
                     {cameraState === "scanning" ? "Camera active" :

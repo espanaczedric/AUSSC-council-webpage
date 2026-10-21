@@ -126,6 +126,59 @@ export async function getAdminUsers() {
     });
 }
 
+export async function saveCouncilAppointment(userId, councilPosition, councilDepartment = "") {
+    return apiRequest("/admin/council/roster", {
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ user_id: userId, council_position: councilPosition, council_department: councilDepartment })
+    });
+}
+
+export async function getCouncilGovernance(period) {
+    const query = period ? `?period=${encodeURIComponent(period)}` : "";
+    return apiRequest(`/council/governance${query}`, { credentials: "include" });
+}
+
+export async function saveCouncilMeeting(meeting) {
+    return apiRequest("/council/meetings/save", { method: "POST", credentials: "include", body: JSON.stringify(meeting) });
+}
+
+export async function saveCouncilMinutes(meetingId, minutes, decisions) {
+    return apiRequest("/council/meetings/minutes", { method: "POST", credentials: "include", body: JSON.stringify({ meeting_id: meetingId, minutes, decisions }) });
+}
+
+export async function reviewCouncilMinutes(meetingId, decision, note) {
+    return apiRequest("/council/meetings/review-minutes", { method: "POST", credentials: "include", body: JSON.stringify({ meeting_id: meetingId, decision, note }) });
+}
+
+export async function submitCouncilExcuse(meetingId, category, details, evidenceUrl) {
+    return apiRequest("/council/meetings/excuse", { method: "POST", credentials: "include", body: JSON.stringify({ meeting_id: meetingId, category, details, evidence_url: evidenceUrl }) });
+}
+
+export async function reviewCouncilExcuse(id, status) {
+    return apiRequest("/council/meetings/review-excuse", { method: "POST", credentials: "include", body: JSON.stringify({ id, status }) });
+}
+
+export async function getCouncilAttendancePass(meetingId) {
+    return apiRequest("/council/attendance/pass", { method: "POST", credentials: "include", body: JSON.stringify({ meeting_id: meetingId }) });
+}
+
+export async function checkInCouncilMember(qrValue, meetingId) {
+    return apiRequest("/council/attendance/checkin", { method: "POST", credentials: "include", body: JSON.stringify({ qr_value: qrValue, meeting_id: meetingId }) });
+}
+
+export async function saveCouncilReport(report) {
+    return apiRequest("/council/reports/save", { method: "POST", credentials: "include", body: JSON.stringify(report) });
+}
+
+export async function reviewCouncilReport(id, decision, note) {
+    return apiRequest("/council/reports/review", { method: "POST", credentials: "include", body: JSON.stringify({ id, decision, note }) });
+}
+
+export async function saveCouncilInventoryItem(item) {
+    return apiRequest("/council/inventory/save", { method: "POST", credentials: "include", body: JSON.stringify(item) });
+}
+
 export async function getMyEventAssignments() {
     return apiRequest("/participation/mine", { credentials: "include" });
 }

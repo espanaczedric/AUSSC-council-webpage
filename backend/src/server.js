@@ -95,11 +95,34 @@ app.use("/uploads", express.static(uploadRoot, { fallthrough: false, index: fals
 
 const text = (value) => value == null ? "" : String(value);
 const studentIdPattern = /^01-[0-9]{4}-[0-9]{6}$/;
+const councilPositions = new Set(["governor", "vice_governor", "secretary", "treasurer", "auditor", "social_media_manager", "department_representative", "advisor", "co_advisor"]);
+const votingCouncilPositions = ["governor", "vice_governor", "secretary", "treasurer", "auditor", "social_media_manager", "department_representative"];
+const councilDepartments = new Set(["CAS", "CMA", "CELA", "CIT", "COE", "CCJE", "CAHS"]);
+const excuseCategories = new Set(["competition", "recognized_organization", "internship", "medical_emergency"]);
+const councilCommittees = new Set(["executive", "publication", "program", "production"]);
 const registrationCode = () => `REG-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
 const ok = (res, message, extra = {}) => res.status(200).json(toApi({ success: true, ...(message ? { message } : {}), ...extra }));
 const fail = (res, status, message, extra = {}) => res.status(status).json({ success: false, message, ...extra });
 const adminOnly = (req, res, next) => req.session?.role === "admin" ? next() : fail(res, 401, "Administrator access is required.");
 const signedIn = (req, res, next) => req.session?.userId ? next() : fail(res, 401, "You must be signed in to continue.");
+
+function councilAccess(positions = [], allowAdmin = true) {
+    return async (req, res, next) => {
+        if (!req.session?.userId) return fail(res, 401, "You must be signed in to continue.");
+        try {
+            const user = await collections.users.findOne({ id: Number(req.session.userId) }, { projection: { id: 1, role: 1, council_position: 1, council_department: 1 } });
+            if (allowAdmin && req.session.role === "admin") { req.councilUser = user; return next(); }
+            if (!user || !councilPositions.has(user.council_position)) return fail(res, 403, "A current A.U.S.S.C. council appointment is required.");
+            if (positions.length && !positions.includes(user.council_position)) return fail(res, 403, "Your council appointment does not have permission for this action.");
+            req.councilUser = user;
+            next();
+        } catch (error) { next(error); }
+    };
+}
+
+function votingCouncilMember(req, res, next) {
+    return councilAccess(votingCouncilPositions, false)(req, res, next);
+}
 
 function toApi(value) {
     if (value instanceof Date) {
@@ -597,7 +620,7 @@ app.get("/api/registration/by-code", signedIn, async (req, res, next) => {
 });
 
 // Admin event and account management
-app.get("/api/admin/events", adminOnly, async (_req, res, next) => {
+app.get("/api/admin/events", councilAccess([...councilPositions]), async (_req, res, next) => {
     try {
         const [events, eventCount, activeEventCount, registrationCount, studentCount] = await Promise.all([
             collections.events.find({}).sort({ start_date: -1 }).toArray(),
@@ -618,7 +641,7 @@ app.get("/api/admin/events", adminOnly, async (_req, res, next) => {
     } catch (error) { return next(error); }
 });
 
-app.get("/api/admin/registrations", adminOnly, async (_req, res, next) => {
+app.get("/api/admin/registrations", councilAccess([...councilPositions]), async (_req, res, next) => {
     try {
         const docs = await collections.registrations.find({}).sort({ registered_at: -1 }).limit(200).toArray();
         const userIds = [...new Set(docs.map((doc) => doc.user_id))];
@@ -654,10 +677,318 @@ app.get("/api/admin/users", adminOnly, async (_req, res, next) => {
     } catch (error) { return next(error); }
 });
 
+const periodForDate = (date = new Date()) => {
+    const parts = new Intl.DateTimeFormat("en-PH", { timeZone: "Asia/Manila", year: "numeric", month: "numeric" }).formatToParts(date).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+    const year = Number(parts.year), month = Number(parts.month);
+    return month >= 7 ? `${year}-1` : `${year - 1}-2`;
+};
+const meetingIdFrom = (value) => Number(value);
+const attendancePassHash = (token) => crypto.createHash("sha256").update(token).digest("hex");
+
+app.post("/api/admin/council/roster", adminOnly, async (req, res, next) => {
+    const userId = Number(req.body.user_id);
+    const position = text(req.body.council_position).trim();
+    const department = text(req.body.council_department).trim().toUpperCase();
+    if (!Number.isInteger(userId) || userId < 1 || (position && !councilPositions.has(position))) return fail(res, 422, "Choose a valid account and council appointment.");
+    if (position === "department_representative" && !councilDepartments.has(department)) return fail(res, 422, "Choose the represented department.");
+    try {
+        const user = await collections.users.findOne({ id: userId }, { projection: { id: 1 } });
+        if (!user) return fail(res, 404, "Council account not found.");
+        if (position && !["advisor", "co_advisor"].includes(position)) {
+            const assignmentQuery = position === "department_representative"
+                ? { id: { $ne: userId }, council_position: position, council_department: department }
+                : { id: { $ne: userId }, council_position: position };
+            const assigned = await collections.users.findOne(assignmentQuery, { projection: { id: 1 } });
+            if (assigned) return fail(res, 409, "That elected council position is already assigned.");
+        }
+        if (!position) {
+            await collections.users.updateOne({ id: userId }, { $unset: { council_position: "", council_department: "" } });
+        } else {
+            const update = { $set: { council_position: position, ...(position === "department_representative" ? { council_department: department } : {}), council_appointed_at: new Date(), council_appointed_by: Number(req.session.userId) } };
+            if (position !== "department_representative") update.$unset = { council_department: "" };
+            await collections.users.updateOne({ id: userId }, update);
+        }
+        return ok(res, position ? "Council appointment saved." : "Council appointment removed.");
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/council/governance", councilAccess([...councilPositions]), async (req, res, next) => {
+    const period = text(req.query.period || periodForDate()).trim();
+    if (!/^20\d{2}-[12]$/.test(period)) return fail(res, 422, "Choose an academic year and semester.");
+    try {
+        const [members, meetings, reports, inventory] = await Promise.all([
+            collections.users.find({ council_position: { $in: [...councilPositions] } }, { projection: { id: 1, first_name: 1, last_name: 1, council_position: 1, council_department: 1 } }).sort({ council_position: 1, last_name: 1 }).toArray(),
+            collections.governanceMeetings.find({ academic_period: period }).sort({ start_at: -1 }).limit(100).toArray(),
+            collections.councilReports.find({ academic_period: period }).sort({ submitted_at: -1 }).limit(100).toArray(),
+            collections.councilInventory.find({}).sort({ item_name: 1 }).limit(500).toArray()
+        ]);
+        const meetingIds = meetings.map((meeting) => meeting.id);
+        const [attendance, excuses] = meetingIds.length ? await Promise.all([
+            collections.councilAttendance.find({ meeting_id: { $in: meetingIds } }).toArray(),
+            collections.councilExcuses.find({ meeting_id: { $in: meetingIds } }).toArray()
+        ]) : [[], []];
+        const attendanceByMeeting = new Map();
+        for (const record of attendance) {
+            const list = attendanceByMeeting.get(record.meeting_id) || [];
+            list.push(record);
+            attendanceByMeeting.set(record.meeting_id, list);
+        }
+        const membersById = new Map(members.map((member) => [member.id, member]));
+        const now = new Date();
+        const completedMandatory = meetings.filter((meeting) => meeting.mandatory && meeting.status !== "cancelled" && new Date(meeting.end_at) <= now);
+        const stats = members.filter((member) => votingCouncilPositions.includes(member.council_position)).map((member) => {
+            const approvedExcuses = new Set(excuses.filter((excuse) => excuse.user_id === member.id && excuse.status === "approved").map((excuse) => excuse.meeting_id));
+            const eligible = completedMandatory.filter((meeting) => !approvedExcuses.has(meeting.id));
+            const attended = eligible.filter((meeting) => attendance.some((record) => record.meeting_id === meeting.id && record.user_id === member.id)).length;
+            const percentage = eligible.length ? Math.round(attended / eligible.length * 100) : null;
+            return { user_id: member.id, name: `${member.first_name} ${member.last_name}`, position: member.council_position, department: member.council_department || null, attended, eligible: eligible.length, approved_excuses: approvedExcuses.size, percentage, good_standing: percentage !== null && percentage >= 80 };
+        });
+        const quorumSize = members.filter((member) => votingCouncilPositions.includes(member.council_position)).length;
+        const currentUser = req.councilUser || await collections.users.findOne({ id: Number(req.session.userId) }, { projection: { id: 1, role: 1, council_position: 1, council_department: 1 } });
+        const enrichedMeetings = meetings.map((meeting) => {
+            const present = attendanceByMeeting.get(meeting.id) || [];
+            const quorumRequired = Math.ceil(quorumSize * 2 / 3);
+            return { ...meeting, attendance: present.map((record) => ({ ...record, member: membersById.get(record.user_id) ? { name: `${membersById.get(record.user_id).first_name} ${membersById.get(record.user_id).last_name}`, position: membersById.get(record.user_id).council_position } : null })), quorum: { present: present.length, total: quorumSize, required: quorumRequired, reached: quorumSize > 0 && present.length >= quorumRequired, waived: Boolean(meeting.quorum_waiver_rationale) } };
+        });
+        const currentMeetingIds = new Set(meetingIds);
+        return ok(res, null, {
+            academic_period: period,
+            current_user: currentUser,
+            members: members.map(({ passwordHash, ...member }) => member),
+            meetings: enrichedMeetings,
+            reports: reports.map((report) => ({ ...report, author_name: membersById.has(report.submitted_by) ? `${membersById.get(report.submitted_by).first_name} ${membersById.get(report.submitted_by).last_name}` : "Former council member", reviewer_name: membersById.has(report.reviewed_by) ? `${membersById.get(report.reviewed_by).first_name} ${membersById.get(report.reviewed_by).last_name}` : "" })),
+            inventory: inventory.map((item) => ({ ...item, updated_by_name: membersById.has(item.updated_by) ? `${membersById.get(item.updated_by).first_name} ${membersById.get(item.updated_by).last_name}` : "Council officer" })),
+            attendance_stats: stats,
+            excuses: excuses.map((excuse) => ({ ...excuse, member: membersById.get(excuse.user_id) ? { name: `${membersById.get(excuse.user_id).first_name} ${membersById.get(excuse.user_id).last_name}`, position: membersById.get(excuse.user_id).council_position } : null, meeting_title: meetings.find((meeting) => meeting.id === excuse.meeting_id)?.title || "Meeting" })),
+            summary: { voting_members: quorumSize, meeting_count: currentMeetingIds.size, completed_mandatory_count: completedMandatory.length, good_standing_count: stats.filter((member) => member.good_standing).length }
+        });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/council/meetings/save", councilAccess(["governor", "vice_governor", "secretary"]), async (req, res, next) => {
+    const id = req.body.id ? Number(req.body.id) : null;
+    const title = text(req.body.title).trim();
+    const meetingType = text(req.body.meeting_type).trim();
+    const location = text(req.body.location).trim();
+    const startAt = parseDate(text(req.body.start_at));
+    const endAt = parseDate(text(req.body.end_at));
+    const period = text(req.body.academic_period || periodForDate(startAt || new Date())).trim();
+    const agenda = text(req.body.agenda).trim();
+    const waiveQuorum = req.body.waive_quorum === true;
+    const waiverRationale = text(req.body.quorum_waiver_rationale).trim();
+    if (id !== null && (!Number.isInteger(id) || id < 1)) return fail(res, 422, "Choose a valid meeting.");
+    if (!title || title.length > 180 || !location || location.length > 180 || !startAt || !endAt || endAt <= startAt || agenda.length > 5000) return fail(res, 422, "Enter a title, location, valid schedule, and agenda under 5,000 characters.");
+    if (!["regular", "special", "mandatory_activity"].includes(meetingType) || !/^20\d{2}-[12]$/.test(period)) return fail(res, 422, "Choose a valid meeting type and academic period.");
+    if (waiveQuorum && (meetingType !== "special" || req.councilUser?.council_position !== "governor" || waiverRationale.length < 20)) return fail(res, 422, "Only the Governor may waive quorum for an urgent special meeting, with a documented rationale of at least 20 characters.");
+    if (!waiveQuorum && waiverRationale) return fail(res, 422, "A quorum waiver requires an urgent special meeting approved by the Governor.");
+    try {
+        const meetingStatus = text(req.body.status || "scheduled");
+        if (!(id ? ["scheduled", "completed", "cancelled"] : ["scheduled"]).includes(meetingStatus)) return fail(res, 422, "Choose a valid meeting status.");
+        const values = { title, meeting_type: meetingType, location, start_at: startAt, end_at: endAt, attendance_opens_at: new Date(startAt.getTime() - 60 * 60 * 1000), attendance_closes_at: new Date(startAt.getTime() + 15 * 60 * 1000), mandatory: req.body.mandatory !== false, academic_period: period, agenda, status: meetingStatus, quorum_waiver_rationale: waiveQuorum ? waiverRationale : "", quorum_waiver_by: waiveQuorum ? Number(req.session.userId) : null, updated_at: new Date() };
+        if (id) {
+            const result = await collections.governanceMeetings.updateOne({ id }, { $set: values });
+            if (!result.matchedCount) return fail(res, 404, "Meeting not found.");
+            return ok(res, "Meeting updated.", { meeting_id: id });
+        }
+        const meetingId = await nextId("governance_meetings");
+        await collections.governanceMeetings.insertOne({ id: meetingId, ...values, created_by: Number(req.session.userId), created_at: new Date(), minutes: "", decisions: "", minutes_status: "draft" });
+        return ok(res, "Meeting scheduled.", { meeting_id: meetingId });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/council/meetings/minutes", councilAccess(["governor", "vice_governor", "secretary"]), async (req, res, next) => {
+    const meetingId = meetingIdFrom(req.body.meeting_id);
+    const minutes = text(req.body.minutes).trim();
+    const decisions = text(req.body.decisions).trim();
+    if (!Number.isInteger(meetingId) || meetingId < 1 || minutes.length > 20000 || decisions.length > 10000) return fail(res, 422, "Enter valid meeting minutes and decision notes.");
+    try {
+        const meeting = await collections.governanceMeetings.findOne({ id: meetingId });
+        if (!meeting) return fail(res, 404, "Meeting not found.");
+        if (new Date(meeting.end_at) > new Date()) return fail(res, 409, "Meeting minutes can be submitted after the meeting ends.");
+        if (decisions) {
+            const [present, total] = await Promise.all([
+                collections.councilAttendance.countDocuments({ meeting_id: meetingId }),
+                collections.users.countDocuments({ council_position: { $in: votingCouncilPositions } })
+            ]);
+            const quorumReached = total > 0 && present >= Math.ceil(total * 2 / 3);
+            const validWaiver = meeting.meeting_type === "special" && Boolean(meeting.quorum_waiver_rationale);
+            if (!quorumReached && !validWaiver) return fail(res, 409, `Quorum is not met (${present} of ${total}; ${Math.ceil(total * 2 / 3)} required). Record minutes without decisions, or document a Governor-approved urgent special-meeting waiver.`);
+        }
+        await collections.governanceMeetings.updateOne({ id: meetingId }, { $set: { minutes, decisions, minutes_status: "pending_advisor", minutes_submitted_by: Number(req.session.userId), minutes_submitted_at: new Date(), status: "completed", updated_at: new Date() } });
+        return ok(res, "Minutes submitted for Advisor review.");
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/council/meetings/review-minutes", councilAccess(["advisor", "co_advisor"], false), async (req, res, next) => {
+    const meetingId = meetingIdFrom(req.body.meeting_id);
+    const decision = text(req.body.decision).trim();
+    const note = text(req.body.note).trim();
+    if (!Number.isInteger(meetingId) || meetingId < 1 || !["approve", "revisions"].includes(decision) || note.length > 2000) return fail(res, 422, "Choose an approval decision and a review note under 2,000 characters.");
+    try {
+        const status = decision === "approve" ? "approved" : "revisions_requested";
+        const result = await collections.governanceMeetings.updateOne({ id: meetingId, minutes_status: "pending_advisor" }, { $set: { minutes_status: status, advisor_note: note, minutes_reviewed_by: Number(req.session.userId), minutes_reviewed_at: new Date(), updated_at: new Date() } });
+        if (!result.modifiedCount) return fail(res, 409, "These minutes are no longer awaiting review.");
+        return ok(res, decision === "approve" ? "Official minutes approved." : "Revisions requested for these minutes.");
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/council/reports/save", councilAccess([...councilPositions], false), async (req, res, next) => {
+    const id = req.body.id ? Number(req.body.id) : null;
+    const committee = text(req.body.committee).trim().toLowerCase();
+    const period = text(req.body.academic_period || periodForDate()).trim();
+    const title = text(req.body.title).trim();
+    const activities = text(req.body.activities).trim();
+    const accomplishments = text(req.body.accomplishments).trim();
+    const recommendations = text(req.body.recommendations).trim();
+    if ((id !== null && (!Number.isInteger(id) || id < 1)) || !councilCommittees.has(committee) || !/^20\d{2}-[12]$/.test(period) || !title || title.length > 180 || activities.length < 10 || activities.length > 5000 || accomplishments.length > 5000 || recommendations.length > 5000) return fail(res, 422, "Complete the committee, period, title, activities, accomplishments, and recommendations fields within their limits.");
+    try {
+        const values = { committee, academic_period: period, title, activities, accomplishments, recommendations, updated_at: new Date() };
+        if (id) {
+            const result = await collections.councilReports.updateOne({ id, submitted_by: Number(req.session.userId), status: { $in: ["submitted", "revisions_requested"] } }, { $set: { ...values, status: "submitted", submitted_at: new Date() }, $unset: { review_note: "", reviewed_by: "", reviewed_at: "" } });
+            if (!result.matchedCount) return fail(res, 404, "Only your submitted or returned report can be updated.");
+            return ok(res, "Committee report resubmitted for Governor review.", { report_id: id });
+        }
+        const reportId = await nextId("council_reports");
+        await collections.councilReports.insertOne({ id: reportId, ...values, status: "submitted", submitted_by: Number(req.session.userId), submitted_at: new Date() });
+        return ok(res, "Committee report submitted for Governor review.", { report_id: reportId });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/council/reports/review", councilAccess(["governor"], false), async (req, res, next) => {
+    const id = Number(req.body.id);
+    const decision = text(req.body.decision).trim();
+    const note = text(req.body.note).trim();
+    if (!Number.isInteger(id) || id < 1 || !["acknowledge", "revisions"].includes(decision) || note.length > 2000) return fail(res, 422, "Choose a report decision and an optional note under 2,000 characters.");
+    try {
+        const status = decision === "acknowledge" ? "acknowledged" : "revisions_requested";
+        const result = await collections.councilReports.updateOne({ id, status: "submitted" }, { $set: { status, review_note: note, reviewed_by: Number(req.session.userId), reviewed_at: new Date(), updated_at: new Date() } });
+        if (!result.modifiedCount) return fail(res, 409, "This report is no longer awaiting review.");
+        return ok(res, decision === "acknowledge" ? "Committee report acknowledged." : "Revisions requested for this report.");
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/council/inventory/save", councilAccess(["auditor", "governor"]), async (req, res, next) => {
+    const id = req.body.id ? Number(req.body.id) : null;
+    const itemName = text(req.body.item_name).trim();
+    const assetTag = text(req.body.asset_tag).trim();
+    const category = text(req.body.category).trim();
+    const quantity = Number(req.body.quantity);
+    const condition = text(req.body.condition).trim();
+    const location = text(req.body.location).trim();
+    const notes = text(req.body.notes).trim();
+    if ((id !== null && (!Number.isInteger(id) || id < 1)) || !itemName || itemName.length > 180 || assetTag.length > 80 || !category || category.length > 100 || !Number.isInteger(quantity) || quantity < 1 || quantity > 100000 || !["serviceable", "needs_repair", "unserviceable", "retired"].includes(condition) || !location || location.length > 180 || notes.length > 2000) return fail(res, 422, "Enter a valid item, category, quantity, condition, location, and notes.");
+    try {
+        const now = new Date();
+        const actor = Number(req.session.userId);
+        const record = { item_name: itemName, asset_tag: assetTag, category, quantity, condition, location, notes, status: condition === "retired" ? "retired" : "active", updated_at: now, updated_by: actor };
+        if (id) {
+            const current = await collections.councilInventory.findOne({ id });
+            if (!current) return fail(res, 404, "Inventory item not found.");
+            const history = [...(current.history || []), { action: "updated", by: actor, at: now, previous_quantity: current.quantity, quantity, previous_condition: current.condition, condition }].slice(-30);
+            await collections.councilInventory.updateOne({ id }, { $set: { ...record, history } });
+            return ok(res, "Inventory record updated.", { inventory_id: id });
+        }
+        const inventoryId = await nextId("council_inventory");
+        await collections.councilInventory.insertOne({ id: inventoryId, ...record, created_at: now, created_by: actor, history: [{ action: "created", by: actor, at: now, quantity, condition }] });
+        return ok(res, "Inventory item added.", { inventory_id: inventoryId });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/council/meetings/excuse", votingCouncilMember, async (req, res, next) => {
+    const meetingId = meetingIdFrom(req.body.meeting_id);
+    const category = text(req.body.category).trim();
+    const details = text(req.body.details).trim();
+    const evidenceUrl = text(req.body.evidence_url).trim();
+    if (!Number.isInteger(meetingId) || meetingId < 1 || !excuseCategories.has(category) || details.length < 10 || details.length > 1000) return fail(res, 422, "Choose a recognized excuse category and provide 10–1,000 characters of context.");
+    if (["competition", "recognized_organization"].includes(category) && !/^https:\/\//i.test(evidenceUrl)) return fail(res, 422, "Attach a secure link to supporting documentation for this exception.");
+    if (evidenceUrl && (!/^https:\/\//i.test(evidenceUrl) || evidenceUrl.length > 1000)) return fail(res, 422, "Supporting documentation must use a valid HTTPS URL under 1,000 characters.");
+    try {
+        const meeting = await collections.governanceMeetings.findOne({ id: meetingId, mandatory: true, status: { $ne: "cancelled" } });
+        if (!meeting) return fail(res, 404, "Mandatory meeting or activity not found.");
+        if (category === "recognized_organization" && new Date(meeting.start_at) <= new Date()) return fail(res, 422, "School-organization exceptions require prior approval. Submit this request before the meeting starts.");
+        const existing = await collections.councilExcuses.findOne({ meeting_id: meetingId, user_id: Number(req.session.userId) });
+        if (existing) return fail(res, 409, "You already submitted an excuse for this meeting.");
+        await collections.councilExcuses.insertOne({ id: await nextId("council_excuses"), meeting_id: meetingId, user_id: Number(req.session.userId), category, details, evidence_url: evidenceUrl, approvals: {}, status: "pending", submitted_at: new Date() });
+        return ok(res, "Excuse submitted for council review.");
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/council/meetings/review-excuse", councilAccess(["governor", "vice_governor", "advisor", "co_advisor"]), async (req, res, next) => {
+    const id = Number(req.body.id);
+    const status = text(req.body.status).trim();
+    if (!Number.isInteger(id) || id < 1 || !["approved", "rejected"].includes(status)) return fail(res, 422, "Choose a valid excuse review decision.");
+    try {
+        const excuse = await collections.councilExcuses.findOne({ id, status: "pending" });
+        if (!excuse) return fail(res, 409, "This excuse was already reviewed or is unavailable.");
+        const position = req.councilUser?.council_position;
+        if (excuse.category === "recognized_organization") {
+            if (!["governor", "advisor", "co_advisor"].includes(position)) return fail(res, 403, "School-organization activities require separate Governor and Advisor approval.");
+            const approvalKey = ["advisor", "co_advisor"].includes(position) ? "advisor" : "governor";
+            if (status === "approved" && excuse.approvals?.[approvalKey]) return fail(res, 409, `The ${approvalKey} has already reviewed this request.`);
+            const approvals = { ...(excuse.approvals || {}) };
+            if (status === "approved") approvals[approvalKey] = Number(req.session.userId);
+            const fullyApproved = Boolean(approvals.governor && approvals.advisor);
+            const nextStatus = status === "rejected" ? "rejected" : fullyApproved ? "approved" : "pending";
+            const result = await collections.councilExcuses.updateOne({ id, status: "pending" }, { $set: { status: nextStatus, approvals, last_reviewed_by: Number(req.session.userId), last_reviewed_at: new Date() } });
+            if (!result.modifiedCount) return fail(res, 409, "This excuse was reviewed by someone else. Refresh and try again.");
+            return ok(res, nextStatus === "approved" ? "Governor and Advisor approval recorded; exception approved." : status === "rejected" ? "Excuse declined." : `Waiting for the ${approvalKey === "governor" ? "Advisor" : "Governor"}'s required approval.`);
+        }
+        const result = await collections.councilExcuses.updateOne({ id, status: "pending" }, { $set: { status, reviewed_by: Number(req.session.userId), reviewed_at: new Date() } });
+        if (!result.modifiedCount) return fail(res, 409, "This excuse was already reviewed or is unavailable.");
+        return ok(res, status === "approved" ? "Excuse approved and excluded from the attendance denominator." : "Excuse declined.");
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/council/attendance/pass", votingCouncilMember, async (req, res, next) => {
+    const meetingId = meetingIdFrom(req.body.meeting_id);
+    if (!Number.isInteger(meetingId) || meetingId < 1) return fail(res, 422, "Choose a valid meeting.");
+    try {
+        const meeting = await collections.governanceMeetings.findOne({ id: meetingId, mandatory: true, status: { $ne: "cancelled" } });
+        if (!meeting) return fail(res, 404, "Meeting pass is unavailable.");
+        const now = new Date();
+        const expiresAt = new Date(meeting.attendance_closes_at);
+        if (now < new Date(meeting.attendance_opens_at) || now > expiresAt) return fail(res, 409, "The attendance pass is available from one hour before the meeting until 15 minutes after it starts.");
+        const token = crypto.randomBytes(32).toString("base64url");
+        const tokenHash = attendancePassHash(token);
+        await collections.councilAttendancePasses.deleteMany({ meeting_id: meetingId, user_id: Number(req.session.userId) });
+        await collections.councilAttendancePasses.insertOne({ token_hash: tokenHash, meeting_id: meetingId, user_id: Number(req.session.userId), expiresAt });
+        return ok(res, null, { pass: `AUSSC-MEETING:${token}`, expires_at: expiresAt, meeting: { id: meeting.id, title: meeting.title, start_at: meeting.start_at, location: meeting.location } });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/council/attendance/checkin", councilAccess(["governor", "vice_governor", "secretary"]), async (req, res, next) => {
+    const qrValue = text(req.body.qr_value).trim();
+    const token = qrValue.startsWith("AUSSC-MEETING:") ? qrValue.slice("AUSSC-MEETING:".length) : "";
+    if (!/^[A-Za-z0-9_-]{40,60}$/.test(token)) return fail(res, 422, "This is not a valid council attendance pass.");
+    const expectedMeetingId = Number(req.body.meeting_id);
+    if (!Number.isInteger(expectedMeetingId) || expectedMeetingId < 1) return fail(res, 422, "Select the meeting the check-in team is serving.");
+    try {
+        const pass = await collections.councilAttendancePasses.findOne({ token_hash: attendancePassHash(token), expiresAt: { $gt: new Date() } });
+        if (!pass) return fail(res, 404, "This attendance pass is invalid or expired.");
+        if (pass.meeting_id !== expectedMeetingId) return fail(res, 409, "This QR pass belongs to a different meeting.", { code: "WRONG_MEETING" });
+        const meeting = await collections.governanceMeetings.findOne({ id: pass.meeting_id });
+        if (!meeting || meeting.status === "cancelled") return fail(res, 409, "This meeting is cancelled or unavailable.");
+        const now = new Date();
+        if (now < new Date(meeting.attendance_opens_at)) return fail(res, 409, "Check-in has not opened yet.");
+        if (now > new Date(meeting.attendance_closes_at)) return fail(res, 409, "Check-in closed 15 minutes after the meeting started. Tardy attendance is not recorded.", { late: true });
+        const member = await collections.users.findOne({ id: pass.user_id }, { projection: { id: 1, first_name: 1, last_name: 1, council_position: 1, council_department: 1 } });
+        if (!member || !votingCouncilPositions.includes(member.council_position)) return fail(res, 403, "This account is not on the current voting council roster.");
+        const existing = await collections.councilAttendance.findOne({ meeting_id: meeting.id, user_id: member.id });
+        if (existing) return ok(res, "This council member is already checked in.", { success: false, already_checked_in: true, member: { name: `${member.first_name} ${member.last_name}`, position: member.council_position }, meeting: { title: meeting.title }, checked_in_at: existing.checked_in_at });
+        try {
+            await collections.councilAttendance.insertOne({ id: await nextId("council_attendance"), meeting_id: meeting.id, user_id: member.id, checked_in_at: now, recorded_by: Number(req.session.userId) });
+        } catch (error) {
+            if (error?.code !== 11000) throw error;
+            return ok(res, "This council member is already checked in.", { success: false, already_checked_in: true, member: { name: `${member.first_name} ${member.last_name}`, position: member.council_position }, meeting: { title: meeting.title } });
+        }
+        return ok(res, "Council member attendance recorded.", { member: { name: `${member.first_name} ${member.last_name}`, position: member.council_position, department: member.council_department || null }, meeting: { title: meeting.title }, checked_in_at: now });
+    } catch (error) { return next(error); }
+});
+
 // Shared committee work items provide one source of truth for publication, production and program workflows.
 const workStatuses = new Set(["Request Submitted", "Requirements Review", "Assigned", "In Design", "Internal Review", "Revisions Requested", "Awaiting Approval", "Approved", "Scheduled", "Published", "Archived", "Not Started", "In Progress", "Blocked", "Complete"]);
 const workCommittees = new Set(["executive", "publication", "production", "program"]);
-app.get("/api/admin/committee-work", adminOnly, async (req, res, next) => {
+app.get("/api/admin/committee-work", councilAccess([...councilPositions]), async (req, res, next) => {
     const committee = text(req.query.committee).trim().toLowerCase();
     if (committee && !workCommittees.has(committee)) return fail(res, 422, "Choose a valid committee workspace.");
     try {
@@ -690,7 +1021,7 @@ app.get("/api/admin/committee-work", adminOnly, async (req, res, next) => {
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/committee-work/save", adminOnly, async (req, res, next) => {
+app.post("/api/admin/committee-work/save", councilAccess([...councilPositions]), async (req, res, next) => {
     const id = Number(req.body.id || 0);
     const committee = text(req.body.committee).trim().toLowerCase();
     const kind = text(req.body.kind).trim().toLowerCase();
@@ -743,7 +1074,7 @@ app.post("/api/admin/committee-work/save", adminOnly, async (req, res, next) => 
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/committee-work/delete", adminOnly, async (req, res, next) => {
+app.post("/api/admin/committee-work/delete", councilAccess([...councilPositions]), async (req, res, next) => {
     const id = Number(req.body.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 422, "Choose a valid work item.");
     try {
@@ -753,7 +1084,7 @@ app.post("/api/admin/committee-work/delete", adminOnly, async (req, res, next) =
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/committee-work/checklist", adminOnly, async (req, res, next) => {
+app.post("/api/admin/committee-work/checklist", councilAccess([...councilPositions]), async (req, res, next) => {
     const id = Number(req.body.id);
     const label = text(req.body.label).trim();
     if (!Number.isInteger(id) || id < 1 || !label || label.length > 180 || typeof req.body.done !== "boolean") return fail(res, 422, "Choose a checklist item and completion status.");
@@ -764,7 +1095,7 @@ app.post("/api/admin/committee-work/checklist", adminOnly, async (req, res, next
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/participation/review", adminOnly, async (req, res, next) => {
+app.post("/api/admin/participation/review", councilAccess(["governor", "vice_governor", "secretary"]), async (req, res, next) => {
     const id = Number(req.body.id);
     const status = text(req.body.status).trim();
     if (!Number.isInteger(id) || id < 1 || !["approved", "rejected"].includes(status)) return fail(res, 422, "Choose a valid assignment decision.");
@@ -789,13 +1120,13 @@ app.get("/api/transparency/reports", async (_req, res, next) => {
     } catch (error) { return next(error); }
 });
 
-app.get("/api/admin/finance", adminOnly, async (_req, res, next) => {
+app.get("/api/admin/finance", councilAccess(["governor", "treasurer", "auditor"]), async (_req, res, next) => {
     try {
         return ok(res, null, { records: await collections.financialRecords.find({}).sort({ period: -1, created_at: -1 }).toArray() });
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/finance/save", adminOnly, async (req, res, next) => {
+app.post("/api/admin/finance/save", councilAccess(["governor", "treasurer", "auditor"]), async (req, res, next) => {
     const id = Number(req.body.id || 0);
     const type = text(req.body.type).trim();
     const title = text(req.body.title).trim();
@@ -868,7 +1199,7 @@ function validateEventFields(body, creating) {
     return { title, description, location, start_date: start, end_date: end, registration_deadline: deadline, capacity, status, publication_status: publicationStatus, assignment_capacity: assignmentCapacity, participation_open: body.participation_open !== "false", participation_requirements: participationRequirements, eligible_courses: eligibleCourses, eligible_year_levels: eligibleYearLevels, require_event_registration: body.require_event_registration === "true" };
 }
 
-app.post("/api/admin/events/create", adminOnly, imageMiddleware, async (req, res, next) => {
+app.post("/api/admin/events/create", councilAccess([...councilPositions]), imageMiddleware, async (req, res, next) => {
     const event = validateEventFields(req.body, true);
     if (event.error) return fail(res, 422, event.error);
     let cover;
@@ -884,7 +1215,7 @@ app.post("/api/admin/events/create", adminOnly, imageMiddleware, async (req, res
     }
 });
 
-app.post("/api/admin/events/update", adminOnly, imageMiddleware, async (req, res, next) => {
+app.post("/api/admin/events/update", councilAccess([...councilPositions]), imageMiddleware, async (req, res, next) => {
     const id = Number(req.query.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 422, "A valid event ID is required.");
     const event = validateEventFields(req.body, false);
@@ -905,7 +1236,7 @@ app.post("/api/admin/events/update", adminOnly, imageMiddleware, async (req, res
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/events/review", adminOnly, async (req, res, next) => {
+app.post("/api/admin/events/review", councilAccess(["governor"], false), async (req, res, next) => {
     const id = Number(req.body.event_id);
     const decision = text(req.body.decision).trim();
     if (!Number.isInteger(id) || id < 1 || !["approve", "return"].includes(decision)) return fail(res, 422, "Choose a valid event approval decision.");
@@ -923,7 +1254,7 @@ async function removeLocalCover(cover) {
     if (!stillReferenced) await fs.unlink(path.join(uploadRoot, "events", path.basename(cover))).catch(() => {});
 }
 
-app.post("/api/admin/events/delete", adminOnly, async (req, res, next) => {
+app.post("/api/admin/events/delete", councilAccess(["governor"]), async (req, res, next) => {
     const id = Number(req.body.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 422, "A valid event ID is required.");
     try {
@@ -936,7 +1267,7 @@ app.post("/api/admin/events/delete", adminOnly, async (req, res, next) => {
 });
 
 // Highlights
-app.get("/api/admin/highlights", adminOnly, async (_req, res, next) => {
+app.get("/api/admin/highlights", councilAccess(["governor", "social_media_manager"]), async (_req, res, next) => {
     try {
         const highlights = await collections.event_highlights.find({}).sort({ created_at: -1 }).toArray();
         const eventIds = [...new Set(highlights.map((highlight) => highlight.event_id))];
@@ -946,7 +1277,7 @@ app.get("/api/admin/highlights", adminOnly, async (_req, res, next) => {
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/highlights/create", adminOnly, async (req, res, next) => {
+app.post("/api/admin/highlights/create", councilAccess(["governor", "social_media_manager"]), async (req, res, next) => {
     const eventId = Number(req.body.event_id), title = text(req.body.title).trim(), description = text(req.body.description).trim();
     const mediaUrl = text(req.body.media_url).trim(), type = text(req.body.media_type || "image");
     if (!Number.isInteger(eventId) || eventId < 1 || !title || title.length > 255 || !description || !mediaUrl || mediaUrl.length > 255) return fail(res, 422, "Complete the event, title, description, and media URL fields.");
@@ -963,7 +1294,7 @@ app.post("/api/admin/highlights/create", adminOnly, async (req, res, next) => {
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/highlights/delete", adminOnly, async (req, res, next) => {
+app.post("/api/admin/highlights/delete", councilAccess(["governor", "social_media_manager"]), async (req, res, next) => {
     const id = Number(req.body.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 422, "A valid highlight ID is required.");
     try {
@@ -974,7 +1305,7 @@ app.post("/api/admin/highlights/delete", adminOnly, async (req, res, next) => {
 });
 
 // Attendance check-in
-app.get("/api/admin/attendance", adminOnly, async (req, res, next) => {
+app.get("/api/admin/attendance", councilAccess(["governor", "vice_governor", "secretary", "social_media_manager"]), async (req, res, next) => {
     const eventId = req.query.event_id ? Number(req.query.event_id) : null;
     if (eventId !== null && (!Number.isInteger(eventId) || eventId < 1)) return fail(res, 422, "Choose a valid event.");
     try {
@@ -1001,7 +1332,7 @@ app.get("/api/admin/attendance", adminOnly, async (req, res, next) => {
     } catch (error) { return next(error); }
 });
 
-app.get("/api/admin/attendance/lookup", adminOnly, async (req, res, next) => {
+app.get("/api/admin/attendance/lookup", councilAccess(["governor", "vice_governor", "secretary", "social_media_manager"]), async (req, res, next) => {
     const eventId = Number(req.query.event_id);
     const query = text(req.query.q).trim().slice(0, 100);
     if (!Number.isInteger(eventId) || eventId < 1 || query.length < 2) return fail(res, 422, "Choose an event and enter at least two search characters.");
@@ -1020,7 +1351,7 @@ app.get("/api/admin/attendance/lookup", adminOnly, async (req, res, next) => {
     } catch (error) { return next(error); }
 });
 
-app.post("/api/attendance/checkin", adminOnly, async (req, res, next) => {
+app.post("/api/attendance/checkin", councilAccess(["governor", "vice_governor", "secretary", "social_media_manager"]), async (req, res, next) => {
     const code = text(req.body.registration_code).trim();
     const expectedEventId = req.body.event_id ? Number(req.body.event_id) : null;
     if (!code || code.length > 100) return fail(res, 422, "The QR code is empty or invalid.");
@@ -1094,6 +1425,9 @@ async function connectDatabase() {
         registrations: db.collection("registrations"), attendance: db.collection("attendance"),
         event_highlights: db.collection("event_highlights"), event_schedules: db.collection("event_schedules"),
         eventAssignments: db.collection("event_assignments"), committeeWorkItems: db.collection("committee_work_items"), financialRecords: db.collection("financial_records"),
+        governanceMeetings: db.collection("governance_meetings"), councilAttendance: db.collection("council_attendance"),
+        councilAttendancePasses: db.collection("council_attendance_passes"), councilExcuses: db.collection("council_excuses"),
+        councilReports: db.collection("council_committee_reports"), councilInventory: db.collection("council_inventory"),
         passwordResetOtps: db.collection("password_reset_otps"),
         sessions: db.collection("sessions"), counters: db.collection("counters")
     };
@@ -1120,6 +1454,19 @@ async function connectDatabase() {
         collections.committeeWorkItems.createIndex({ committee: 1, status: 1, due_at: 1 }),
         collections.financialRecords.createIndex({ id: 1 }, { unique: true }),
         collections.financialRecords.createIndex({ public_status: 1, period: -1 }),
+        collections.governanceMeetings.createIndex({ id: 1 }, { unique: true }),
+        collections.governanceMeetings.createIndex({ academic_period: 1, start_at: -1 }),
+        collections.councilAttendance.createIndex({ id: 1 }, { unique: true }),
+        collections.councilAttendance.createIndex({ meeting_id: 1, user_id: 1 }, { unique: true }),
+        collections.councilAttendancePasses.createIndex({ token_hash: 1 }, { unique: true }),
+        collections.councilAttendancePasses.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+        collections.councilAttendancePasses.createIndex({ meeting_id: 1, user_id: 1 }),
+        collections.councilExcuses.createIndex({ id: 1 }, { unique: true }),
+        collections.councilExcuses.createIndex({ meeting_id: 1, user_id: 1 }, { unique: true }),
+        collections.councilReports.createIndex({ id: 1 }, { unique: true }),
+        collections.councilReports.createIndex({ academic_period: 1, committee: 1, submitted_at: -1 }),
+        collections.councilInventory.createIndex({ id: 1 }, { unique: true }),
+        collections.councilInventory.createIndex({ condition: 1, item_name: 1 }),
         collections.passwordResetOtps.createIndex({ email: 1 }, { unique: true }),
         collections.passwordResetOtps.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
         collections.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 })

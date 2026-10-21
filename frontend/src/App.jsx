@@ -23,6 +23,7 @@ import Login from "./pages/login";
 import RegisterAccount from "./pages/RegisterAccount";
 import ForgotPassword from "./pages/ForgotPassword";
 import CouncilProfile from "./pages/CouncilProfile";
+import CouncilGovernance from "./pages/CouncilGovernance";
 
 // Admin Pages
 import AdminDashboard from "./pages/admin/AdminDashboard";
@@ -98,6 +99,7 @@ function App() {
                 />
 
                 <Route path="/profile" element={<CouncilProfile />} />
+                <Route path="/council" element={<CouncilGovernance />} />
 
 
                 {/* =========================

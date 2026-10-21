@@ -3989,6 +3989,149 @@ select:focus-visible, textarea:focus-visible {
 .attendance-list-toolbar input,.attendance-list-toolbar select { min-height: 41px; padding: 9px 11px; border: 1px solid #dce3eb; border-radius: 9px; background: #fff; font: inherit; font-size: .82rem; }
 .attendance-state { display: inline-flex; padding: 5px 8px; border-radius: 20px; background: #e8f6ef; color: #22734c; font-size: .68rem; font-weight: 800; }
 
+.council-appointment-cell { min-width: 210px; }
+.council-appointment-cell select { display: block; width: 100%; min-height: 36px; margin-bottom: 6px; padding: 7px 9px; border: 1px solid #dce3eb; border-radius: 8px; background: #fff; color: #172a42; font: inherit; font-size: .75rem; }
+.council-appointment-cell .admin-secondary-action { min-height: 32px; padding: 6px 10px; font-size: .7rem; }
+.council-governance-page { padding-bottom: 48px; }
+.council-governance-page .admin-page-heading small { display: inline-block; margin-top: 10px; color: #8b650e; font-size: .76rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.council-governance-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)) minmax(190px,.85fr); gap: 12px; margin: 20px 0; }
+.council-governance-metrics article,.council-period-filter { display: grid; align-content: start; gap: 7px; min-width: 0; padding: 16px; border: 1px solid #e1e7ee; border-radius: 14px; background: #fff; }
+.council-governance-metrics article > span,.council-period-filter > span { color: #8290a2; font-size: .64rem; font-weight: 850; letter-spacing: .11em; }
+.council-governance-metrics article strong { color: #142b46; font-size: 1.5rem; }
+.council-governance-metrics article small,.council-period-filter small { color: #77869a; font-size: .72rem; }
+.council-period-filter input { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid #dce3eb; border-radius: 8px; color: #172a42; font: inherit; }
+.council-governance-tabs { display: flex; gap: 8px; margin: 20px 0; border-bottom: 1px solid #dce3eb; }
+.council-governance-tabs button { padding: 10px 13px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #66768b; font: inherit; font-size: .82rem; font-weight: 750; cursor: pointer; }
+.council-governance-tabs button.is-active { border-bottom-color: #e9ad1c; color: #142b46; }
+.council-meeting-editor,.council-meeting-detail,.council-meeting-list,.council-standing-section,.council-excuse-queue { margin: 18px 0; padding: 20px; border: 1px solid #e1e7ee; border-radius: 16px; background: #fff; box-shadow: 0 10px 28px rgba(10,30,52,.045); }
+.council-mandatory-toggle { display: flex !important; align-items: center; gap: 9px !important; align-self: end; min-height: 40px; color: #384b62 !important; }
+.council-mandatory-toggle input { width: 17px; min-height: 17px; accent-color: #d89f16; }
+.council-rule-note { display: block; margin-top: 13px; color: #758398; font-size: .75rem; line-height: 1.6; }
+.council-meeting-layout { display: grid; grid-template-columns: minmax(235px,.62fr) minmax(0,1.55fr); align-items: start; gap: 16px; margin-top: 18px; }
+.council-meeting-list { position: sticky; top: 20px; margin: 0; padding: 15px; }
+.council-meeting-list .admin-section-heading { margin-bottom: 10px; }
+.council-meeting-option { display: grid; width: 100%; gap: 6px; margin-top: 8px; padding: 13px; border: 1px solid #e2e8ef; border-radius: 11px; background: #fff; text-align: left; cursor: pointer; }
+.council-meeting-option:hover,.council-meeting-option.is-active { border-color: #e5b134; background: #fffbef; }
+.council-meeting-option > span { color: #917014; font-size: .63rem; font-weight: 850; letter-spacing: .06em; text-transform: uppercase; }
+.council-meeting-option strong { color: #142b46; font-size: .88rem; }
+.council-meeting-option small { color: #6d7d91; font-size: .7rem; line-height: 1.4; }
+.council-meeting-detail { min-width: 0; margin: 0; padding: 20px; }
+.council-meeting-detail > .admin-section-heading p { margin: 7px 0 0; color: #66768b; font-size: .8rem; }
+.council-quorum-status { display: grid; gap: 5px; margin: 15px 0; padding: 13px 15px; border: 1px solid #f1c4bf; border-radius: 11px; background: #fff5f3; color: #913f35; }
+.council-quorum-status.is-met { border-color: #c5e6d4; background: #f0faf4; color: #256347; }
+.council-quorum-status strong { font-size: .84rem; text-transform: capitalize; }
+.council-quorum-status span,.council-quorum-status small { font-size: .72rem; }
+.council-agenda { margin: 15px 0; padding: 14px; border-radius: 11px; background: #f5f7fa; }
+.council-agenda h3,.council-attendance-roster h3,.council-qr-scanner h3,.council-minutes-form h3,.council-excuse-form h3 { margin: 0 0 7px; color: #152d49; font-size: .9rem; }
+.council-agenda p,.council-minutes-readonly > p { margin: 0; color: #56677d; font-size: .8rem; line-height: 1.65; white-space: pre-wrap; }
+.council-qr-pass { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 15px 0; padding: 16px; border: 1px solid #e7e0cc; border-radius: 13px; background: linear-gradient(135deg,#fffaf0,#f6f8fb); }
+.council-qr-pass > div:first-child { max-width: 360px; }
+.council-qr-pass > div:first-child > span,.council-minutes-readonly .admin-section-heading > div > span { color: #997013; font-size: .63rem; font-weight: 850; letter-spacing: .1em; }
+.council-qr-pass h3 { margin: 6px 0; color: #152d49; font-size: 1rem; }
+.council-qr-pass p { margin: 0; color: #718096; font-size: .75rem; line-height: 1.5; }
+.council-qr-pass .admin-primary-action { min-height: 40px; padding: 9px 13px; }
+.council-qr-code { display: grid; justify-items: center; gap: 7px; padding: 12px; border-radius: 11px; background: #fff; }
+.council-qr-code code { color: #66768b; font-size: .62rem; }
+.council-qr-scanner { margin: 16px 0; padding: 15px; border: 1px solid #e1e7ee; border-radius: 13px; background: #fbfcfd; }
+.council-qr-scanner .qr-camera-panel { margin: 0; }
+.council-manual-qr { display: flex; align-items: end; gap: 9px; margin-top: 12px; }
+.council-manual-qr label,.council-excuse-form label,.council-minutes-form label,.council-minutes-review label { display: grid; flex: 1; gap: 6px; color: #46566b; font-size: .73rem; font-weight: 750; }
+.council-manual-qr input,.council-excuse-form input,.council-excuse-form select,.council-excuse-form textarea,.council-minutes-form textarea,.council-minutes-review textarea { width: 100%; min-height: 39px; padding: 9px 10px; border: 1px solid #dce3eb; border-radius: 8px; background: #fff; color: #172a42; font: inherit; font-size: .78rem; }
+.council-scan-result { display: grid; gap: 4px; margin-top: 12px; padding: 12px; border: 1px solid #c5e6d4; border-radius: 10px; background: #f0faf4; color: #256347; }
+.council-scan-result.is-invalid { border-color: #f1c4bf; background: #fff5f3; color: #913f35; }
+.council-scan-result.is-wrong-meeting { border-color: #f3d69d; background: #fff9eb; color: #80560c; }
+.council-scan-result.is-pending { border-color: #d6e2f1; background: #f3f7fb; color: #395675; }
+.council-scan-result strong { font-size: .84rem; }
+.council-scan-result span,.council-scan-result p { margin: 0; font-size: .74rem; }
+.council-attendance-roster { margin: 17px 0; }
+.council-attendance-roster .admin-section-heading { margin-bottom: 8px; }
+.council-attendance-roster ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.council-attendance-roster li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 9px; background: #f5f7fa; }
+.council-attendance-roster li strong,.council-attendance-roster li span { color: #50627a; font-size: .73rem; }
+.council-attendance-roster > p { color: #718096; font-size: .76rem; }
+.council-excuse-form,.council-minutes-form,.council-minutes-review,.council-minutes-readonly { display: grid; gap: 11px; margin-top: 16px; padding: 15px; border: 1px solid #e1e7ee; border-radius: 12px; background: #fbfcfd; }
+.council-excuse-form > p { margin: 0; color: #718096; font-size: .73rem; line-height: 1.5; }
+.council-excuse-form .admin-secondary-action,.council-minutes-form .admin-primary-action,.council-minutes-review .admin-primary-action,.council-minutes-review .admin-secondary-action { justify-self: start; min-height: 38px; padding: 8px 12px; }
+.council-minutes-readonly { background: #fff; }
+.council-minutes-readonly h4 { margin: 9px 0 4px; color: #192f4a; font-size: .8rem; }
+.council-minutes-readonly small { color: #748399; }
+.council-minutes-status { padding: 5px 8px; border-radius: 20px; background: #fff2d2; color: #8a650c; font-size: .65rem; font-weight: 800; text-transform: capitalize; }
+.council-minutes-status.is-approved { background: #eaf6ef; color: #24734c; }
+.council-minutes-status.is-revisions_requested { background: #fff0ee; color: #a34638; }
+.council-minutes-review > div:last-child { display: flex; flex-wrap: wrap; gap: 8px; }
+.council-excuse-queue article { display: flex; justify-content: space-between; gap: 18px; padding: 13px 0; border-top: 1px solid #e7ebf0; }
+.council-excuse-queue article > div:first-child { display: grid; gap: 5px; }
+.council-excuse-queue article strong { color: #172d48; font-size: .82rem; }
+.council-excuse-queue article span,.council-excuse-queue article p,.council-excuse-queue article small { margin: 0; color: #68798f; font-size: .74rem; line-height: 1.5; }
+.council-excuse-queue article a { color: #8b650e; font-size: .74rem; font-weight: 700; }
+.council-excuse-queue article > div:last-child { display: flex; flex-wrap: wrap; align-content: center; gap: 7px; }
+.council-excuse-queue article button { min-height: 34px; padding: 7px 10px; border: 1px solid #d8e0e9; border-radius: 8px; background: #fff; color: #344960; font: inherit; font-size: .7rem; font-weight: 750; cursor: pointer; }
+.council-standing-badge { display: inline-flex; padding: 5px 8px; border-radius: 18px; background: #e9f6ef; color: #28734e; font-size: .68rem; font-weight: 800; }
+.council-standing-badge.is-low { background: #fff0ee; color: #a34638; }
+.council-standing-section .admin-section-heading p { color: #718096; font-size: .78rem; }
+.council-governance-links { display: flex; flex-wrap: wrap; align-items: center; gap: 9px 16px; margin-top: 25px; padding: 14px 0; border-top: 1px solid #e1e7ee; }
+.council-governance-links strong { width: 100%; color: #7d8a9d; font-size: .65rem; letter-spacing: .1em; text-transform: uppercase; }
+.council-governance-links a { color: #8a650e; font-size: .75rem; font-weight: 750; text-decoration: none; }
+.council-reports-section { margin: 18px 0; padding: 20px; border: 1px solid #e1e7ee; border-radius: 16px; background: #fff; }
+.council-report-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 18px 0; padding: 16px; border: 1px solid #e1e7ee; border-radius: 13px; background: #fbfcfd; }
+.council-report-form h3 { grid-column: 1 / -1; margin: 0; color: #152d49; font-size: .95rem; }
+.council-report-form label,.council-report-review label { display: grid; gap: 6px; color: #46566b; font-size: .73rem; font-weight: 750; }
+.council-report-form input,.council-report-form select,.council-report-form textarea,.council-report-review input { width: 100%; min-height: 39px; padding: 9px 10px; border: 1px solid #dce3eb; border-radius: 8px; background: #fff; color: #172a42; font: inherit; font-size: .78rem; }
+.council-report-form textarea { resize: vertical; }
+.council-report-form .admin-primary-action { justify-self: start; min-height: 38px; padding: 8px 12px; }
+.council-report-list { display: grid; gap: 12px; }
+.council-report-list > article { padding: 16px; border: 1px solid #e1e7ee; border-radius: 12px; }
+.council-report-list > article > header { display: flex; justify-content: space-between; gap: 10px; }
+.council-report-list > article > header > div > span { color: #997013; font-size: .63rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.council-report-list h3 { margin: 5px 0; color: #152d49; font-size: .96rem; }
+.council-report-list h4 { margin: 12px 0 4px; color: #334b67; font-size: .74rem; }
+.council-report-list p { margin: 0; color: #5e6e82; font-size: .78rem; line-height: 1.6; white-space: pre-wrap; }
+.council-report-list small { color: #77869a; font-size: .69rem; }
+.council-report-list > article > .admin-secondary-action { margin-top: 12px; }
+.council-report-review { display: flex; align-items: end; gap: 8px; margin-top: 13px; padding-top: 12px; border-top: 1px solid #e7ebf0; }
+.council-report-review .admin-primary-action,.council-report-review .admin-secondary-action { min-height: 38px; padding: 8px 11px; }
+.council-inventory-section { margin: 18px 0; padding: 20px; border: 1px solid #e1e7ee; border-radius: 16px; background: #fff; }
+.council-inventory-form { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin: 18px 0; padding: 16px; border: 1px solid #e1e7ee; border-radius: 13px; background: #fbfcfd; }
+.council-inventory-form h3 { grid-column: 1 / -1; margin: 0; color: #152d49; font-size: .95rem; }
+.council-inventory-form label { display: grid; gap: 6px; color: #46566b; font-size: .73rem; font-weight: 750; }
+.council-inventory-form input,.council-inventory-form select,.council-inventory-form textarea { width: 100%; min-height: 39px; padding: 9px 10px; border: 1px solid #dce3eb; border-radius: 8px; background: #fff; color: #172a42; font: inherit; font-size: .78rem; }
+.council-inventory-notes { grid-column: span 2; }
+.council-work-actions { display: flex; align-items: end; gap: 8px; }
+.council-work-actions .admin-primary-action,.council-work-actions .admin-secondary-action { min-height: 38px; padding: 8px 11px; }
+.council-inventory-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.council-inventory-list > article { display: flex; justify-content: space-between; gap: 12px; padding: 15px; border: 1px solid #e1e7ee; border-radius: 12px; }
+.council-inventory-list h3 { margin: 8px 0 3px; color: #172d48; font-size: .9rem; }
+.council-inventory-list small,.council-inventory-list p { color: #6c7c90; font-size: .72rem; line-height: 1.5; }
+.council-inventory-list p { margin: 7px 0 0; }
+.council-inventory-list details { display: grid; gap: 5px; margin-top: 8px; }
+.council-inventory-list summary { color: #8a650e; font-size: .7rem; font-weight: 750; cursor: pointer; }
+.council-inventory-list details small { display: block; margin-top: 4px; }
+.council-inventory-condition { display: inline-flex; padding: 4px 7px; border-radius: 15px; background: #eaf6ef; color: #24734c; font-size: .61rem; font-weight: 850; text-transform: capitalize; }
+.council-inventory-condition.is-needs_repair { background: #fff6dc; color: #8a650e; }
+.council-inventory-condition.is-unserviceable,.council-inventory-condition.is-retired { background: #fff0ee; color: #a34638; }
+.council-inventory-list .admin-secondary-action { align-self: flex-start; min-height: 34px; padding: 7px 9px; }
+
+@media (max-width: 920px) {
+    .council-governance-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .council-meeting-layout { grid-template-columns: minmax(200px,.7fr) minmax(0,1.3fr); }
+}
+@media (max-width: 680px) {
+    .council-governance-metrics { grid-template-columns: 1fr 1fr; }
+    .council-governance-metrics article,.council-period-filter { padding: 12px; }
+    .council-meeting-layout { grid-template-columns: 1fr; }
+    .council-meeting-list { position: static; }
+    .council-meeting-detail,.council-meeting-list,.council-meeting-editor,.council-standing-section,.council-excuse-queue { padding: 14px; }
+    .council-qr-pass { align-items: flex-start; flex-direction: column; }
+    .council-manual-qr,.council-excuse-queue article { align-items: stretch; flex-direction: column; }
+    .council-attendance-roster li { align-items: flex-start; flex-direction: column; gap: 4px; }
+    .council-report-form { grid-template-columns: 1fr; }
+    .council-report-form h3 { grid-column: auto; }
+    .council-report-review { align-items: stretch; flex-direction: column; }
+    .council-inventory-form,.council-inventory-list { grid-template-columns: 1fr; }
+    .council-inventory-form h3,.council-inventory-notes { grid-column: auto; }
+    .council-inventory-list > article { align-items: flex-start; flex-direction: column; }
+}
+
 @media (max-width: 760px) {
     .committee-focus-grid,.finance-metric-grid,.finance-public-metrics { grid-template-columns: 1fr; }
     .committee-work-form,.finance-entry-form { grid-template-columns: repeat(2,minmax(0,1fr)); }

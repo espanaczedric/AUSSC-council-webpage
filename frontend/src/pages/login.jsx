@@ -61,6 +61,7 @@ function Login() {
             const nextPath = requestedPath?.startsWith("/") && !requestedPath.startsWith("//") ? requestedPath : null;
             if (nextPath && data.user.role !== "admin") navigate(nextPath);
             else if (data.user.role === "admin") navigate("/admin");
+            else if (data.user.council_position) navigate("/council");
             else navigate("/my-events");
         } catch (requestError) {
             console.error("Login error:", requestError);

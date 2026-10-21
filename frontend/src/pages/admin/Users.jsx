@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 
 import AdminNav from "../../components/AdminNav";
-import { getAdminUsers } from "../../services/api";
+import { getAdminUsers, saveCouncilAppointment } from "../../services/api";
+
+const appointmentOptions = [
+    ["", "Not appointed"], ["governor", "Governor"], ["vice_governor", "Vice Governor"],
+    ["secretary", "Secretary"], ["treasurer", "Treasurer"], ["auditor", "Auditor"],
+    ["social_media_manager", "Social Media Manager"], ["department_representative", "Department Representative"],
+    ["advisor", "Advisor"], ["co_advisor", "Co-Advisor"]
+];
+const departments = ["CAS", "CMA", "CELA", "CIT", "COE", "CCJE", "CAHS"];
 
 function Users() {
     const [users, setUsers] = useState([]);
@@ -10,11 +18,15 @@ function Users() {
     const [error, setError] = useState("");
     const [query, setQuery] = useState("");
     const [roleFilter, setRoleFilter] = useState("all");
+    const [appointments, setAppointments] = useState({});
+    const [savingAppointment, setSavingAppointment] = useState("");
+    const [notice, setNotice] = useState("");
 
     useEffect(() => {
         getAdminUsers()
             .then((data) => {
                 setUsers(data.users || []);
+                setAppointments(Object.fromEntries((data.users || []).map((user) => [user.id, { council_position: user.council_position || "", council_department: user.council_department || "" }])));
                 setStudentCount(Number(data.student_count) || 0);
             })
             .catch((requestError) => setError(requestError.message))
@@ -26,6 +38,17 @@ function Users() {
         const searchText = `${user.first_name} ${user.last_name} ${user.student_id} ${user.email} ${user.course || ""}`.toLowerCase();
         return matchesRole && searchText.includes(query.trim().toLowerCase());
     });
+
+    async function saveAppointment(user) {
+        const appointment = appointments[user.id] || { council_position: "", council_department: "" };
+        setSavingAppointment(String(user.id)); setError(""); setNotice("");
+        try {
+            await saveCouncilAppointment(user.id, appointment.council_position, appointment.council_department);
+            setUsers((current) => current.map((item) => item.id === user.id ? { ...item, ...appointment } : item));
+            setNotice(`Council appointment saved for ${user.first_name} ${user.last_name}.`);
+        } catch (requestError) { setError(requestError.message || "Appointment could not be saved."); }
+        finally { setSavingAppointment(""); }
+    }
 
     return (
         <>
@@ -61,6 +84,7 @@ function Users() {
                 </div>
 
                 {error && <p className="admin-feedback is-error" role="alert">{error}</p>}
+                {notice && <p className="admin-feedback" role="status">{notice}</p>}
                 {loading ? (
                     <p className="admin-feedback" role="status">Loading accounts…</p>
                 ) : filteredUsers.length ? (
@@ -74,6 +98,7 @@ function Users() {
                                     <th scope="col">Program</th>
                                     <th scope="col">Year</th>
                                     <th scope="col">Role</th>
+                                    <th scope="col">Council appointment</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -85,6 +110,13 @@ function Users() {
                                         <td>{user.course || "—"}</td>
                                         <td>{user.year_level || "—"}</td>
                                         <td><span className={`admin-status is-${user.role}`}>{user.role}</span></td>
+                                        <td className="council-appointment-cell">
+                                            <select aria-label={`Council appointment for ${user.first_name} ${user.last_name}`} value={appointments[user.id]?.council_position || ""} onChange={(event) => setAppointments((current) => ({ ...current, [user.id]: { ...current[user.id], council_position: event.target.value, council_department: event.target.value === "department_representative" ? current[user.id]?.council_department || "CAS" : "" } }))}>
+                                                {appointmentOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                                            </select>
+                                            {appointments[user.id]?.council_position === "department_representative" && <select aria-label={`Department represented by ${user.first_name} ${user.last_name}`} value={appointments[user.id]?.council_department || "CAS"} onChange={(event) => setAppointments((current) => ({ ...current, [user.id]: { ...current[user.id], council_department: event.target.value } }))}>{departments.map((department) => <option key={department}>{department}</option>)}</select>}
+                                            <button type="button" className="admin-secondary-action" disabled={savingAppointment === String(user.id)} onClick={() => saveAppointment(user)}>{savingAppointment === String(user.id) ? "Saving…" : "Save"}</button>
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>

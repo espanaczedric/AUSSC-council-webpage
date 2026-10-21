@@ -17,6 +17,12 @@ function initialsFor(user) {
     return `${user?.first_name?.[0] || ""}${user?.last_name?.[0] || ""}`.toUpperCase() || "U";
 }
 
+const councilPositionNames = {
+    governor: "Governor", vice_governor: "Vice Governor", secretary: "Secretary",
+    treasurer: "Treasurer", auditor: "Auditor", social_media_manager: "Social Media Manager",
+    department_representative: "Department Representative", advisor: "Advisor", co_advisor: "Co-Advisor"
+};
+
 function formatDate(value) {
     if (!value) return "—";
     const date = new Date(typeof value === "string" ? value.replace(" ", "T") : value);
@@ -72,6 +78,7 @@ export default function CouncilProfile() {
         { label: "Email address", value: user.email || "—" },
         { label: "Course / program", value: user.course || "—" },
         { label: "Year level", value: user.year_level || "—" },
+        ...(user.council_position ? [{ label: "Council appointment", value: `${councilPositionNames[user.council_position] || user.council_position}${user.council_department ? ` · ${user.council_department}` : ""}` }] : []),
         { label: "Account type", value: user.role === "admin" ? "Council administrator" : "Student" },
         { label: "Member since", value: formatDate(user.created_at) }
     ];
@@ -97,7 +104,7 @@ export default function CouncilProfile() {
                     <div className="council-profile-identity">
                         <div className="council-profile-avatar" aria-hidden="true">{initialsFor(user)}</div>
                         <div className="council-profile-name">
-                            <span className="council-profile-role">{user.role === "admin" ? "Council administrator" : "Student account"}</span>
+                            <span className="council-profile-role">{councilPositionNames[user.council_position] || (user.role === "admin" ? "Council administrator" : "Student account")}</span>
                             <h2>{[user.first_name, user.last_name].filter(Boolean).join(" ") || "Council member"}</h2>
                             <p>{user.email || "Email not available"}</p>
                         </div>
@@ -119,8 +126,8 @@ export default function CouncilProfile() {
                         <p>Keep track of your event registrations and discover what’s happening on campus.</p>
                     </div>
                     <div className="council-profile-links">
-                        <Link className="register-button" to={user.role === "admin" ? "/admin" : "/my-events"}>
-                            {user.role === "admin" ? "Council workspace" : "My registrations"}
+                        <Link className="register-button" to={user.council_position ? "/council" : user.role === "admin" ? "/admin" : "/my-events"}>
+                            {user.council_position ? "Council governance" : user.role === "admin" ? "Council workspace" : "My registrations"}
                         </Link>
                         <Link className="council-profile-secondary" to="/events">Browse events <span aria-hidden="true">→</span></Link>
                     </div>
