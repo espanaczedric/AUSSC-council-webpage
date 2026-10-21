@@ -85,13 +85,7 @@ function Home() {
 
             <main>
 
-                <EventHero event={loadError ? null : upcoming} />
-
-                {loadError && (
-                    <p className="home-event-error" role="alert">
-                        Event listings are temporarily unavailable. Please try again later.
-                    </p>
-                )}
+                <EventHero event={loadError ? null : upcoming} loadError={loadError} />
 
                 <section className="council-intro" id="council">
                     <div className="council-intro-copy">

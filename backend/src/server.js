@@ -209,9 +209,16 @@ async function sendPasswordResetEmail(email, code) {
     }
 }
 
-app.get("/api/health", (_req, res) => {
-    if (!databaseReady) return fail(res, 503, "MongoDB is not connected.", { status: "not_ready", database: "mongodb" });
-    return ok(res, null, { status: "ready", database: "mongodb" });
+app.get("/api/health", async (_req, res) => {
+    if (!db) return fail(res, 503, "MongoDB is not connected.", { status: "not_ready", database: "mongodb" });
+    try {
+        await db.command({ ping: 1 });
+        databaseReady = true;
+        return ok(res, null, { status: "ready", database: "mongodb" });
+    } catch {
+        databaseReady = false;
+        return fail(res, 503, "MongoDB is not responding.", { status: "not_ready", database: "mongodb" });
+    }
 });
 
 // Authentication
@@ -1024,6 +1031,21 @@ app.post("/api/attendance/checkin", adminOnly, async (req, res, next) => {
 app.use((error, _req, res, _next) => {
     if (res.headersSent) return;
     console.error(error);
+    const mongoConnectionErrors = new Set([
+        "MongoNetworkError",
+        "MongoServerSelectionError",
+        "MongoNotConnectedError",
+        "MongoTopologyClosedError",
+        "MongoPoolClearedError",
+        "MongoWaitQueueTimeoutError"
+    ]);
+    if (mongoConnectionErrors.has(error?.name)) {
+        databaseReady = false;
+        return fail(res, 503, "The sign-in database is temporarily unavailable. Please try again shortly.", {
+            code: "DATABASE_UNAVAILABLE",
+            database: "mongodb"
+        });
+    }
     return fail(res, 500, "The request could not be completed. Please try again.");
 });
 

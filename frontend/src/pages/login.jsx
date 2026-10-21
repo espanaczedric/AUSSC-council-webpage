@@ -17,14 +17,17 @@ function Login() {
 
     useEffect(() => {
         let active = true;
-        apiRequest("/health")
-            .then((data) => {
+        async function checkDatabase() {
+            try {
+                const data = await apiRequest("/health");
                 if (active) setDatabaseStatus(data.database === "mongodb" && data.status === "ready" ? "connected" : "unavailable");
-            })
-            .catch(() => {
-                if (active) setDatabaseStatus("unavailable");
-            });
-        return () => { active = false; };
+            } catch (error) {
+                if (active) setDatabaseStatus(error.code === "API_URL_NOT_CONFIGURED" ? "misconfigured" : "unavailable");
+            }
+        }
+        void checkDatabase();
+        const interval = window.setInterval(checkDatabase, 15000);
+        return () => { active = false; window.clearInterval(interval); };
     }, []);
 
     async function handleSubmit(event) {
@@ -61,6 +64,8 @@ function Login() {
             else navigate("/my-events");
         } catch (requestError) {
             console.error("Login error:", requestError);
+            if (requestError.code === "DATABASE_UNAVAILABLE") setDatabaseStatus("unavailable");
+            if (requestError.code === "API_URL_NOT_CONFIGURED") setDatabaseStatus("misconfigured");
             setError(requestError.message || "Unable to connect. Check your connection and try again.");
         } finally {
             setLoading(false);
@@ -74,8 +79,9 @@ function Login() {
                     <p className={`login-db-status is-${databaseStatus}`} role="status" aria-live="polite">
                         <span aria-hidden="true" />
                         {databaseStatus === "checking" && "Checking sign-in service…"}
-                        {databaseStatus === "connected" && "Sign-in service connected"}
-                        {databaseStatus === "unavailable" && "Sign-in service unavailable. Check that MongoDB and the API are running."}
+                        {databaseStatus === "connected" && "Database responding"}
+                        {databaseStatus === "unavailable" && "Sign-in API or database is unavailable."}
+                        {databaseStatus === "misconfigured" && "Sign-in API is not configured for this deployment."}
                     </p>
 
                     <form className="login-form login-redesign-form" onSubmit={handleSubmit}>

@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import EventImage from "./EventImage";
 
-function EventHero({ event }) {
+function EventHero({ event, loadError = false }) {
     const eventStatus = event?.display_status || event?.status;
     const eventDate = event?.start_date
         ? new Date(event.start_date).toLocaleDateString("en-PH", {
@@ -47,8 +47,10 @@ function EventHero({ event }) {
                 ) : (
                     <div className="home-event-empty">
                         <span className="home-event-mark" aria-hidden="true">A</span>
-                        <p>Good things are taking shape.</p>
-                        <strong>New campus events will be announced here.</strong>
+                        <p role={loadError ? "status" : undefined}>
+                            {loadError ? "Event listings are temporarily unavailable. Please try again later." : "Good things are taking shape."}
+                        </p>
+                        <strong>{loadError ? "Please check back soon for campus events." : "New campus events will be announced here."}</strong>
                         <Link to="/events">Browse event archive <span aria-hidden="true">→</span></Link>
                     </div>
                 )}

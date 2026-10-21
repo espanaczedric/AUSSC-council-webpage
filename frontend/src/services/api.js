@@ -1,5 +1,5 @@
-export const API_URL =
-    (import.meta.env.VITE_API_URL || "http://localhost:3000/api").replace(/\/$/, "");
+const configuredApiUrl = import.meta.env.VITE_API_URL?.trim();
+export const API_URL = (configuredApiUrl || (import.meta.env.DEV ? "http://localhost:3000/api" : "")).replace(/\/$/, "");
 
 const BACKEND_URL = API_URL.replace(/\/api\/?$/, "");
 
@@ -18,6 +18,12 @@ export function getEventImageUrl(path) {
 }
 
 export async function apiRequest(path, options = {}) {
+    if (!API_URL) {
+        const error = new Error("The sign-in API is not configured for this deployment. Set VITE_API_URL to your deployed API address ending in /api.");
+        error.code = "API_URL_NOT_CONFIGURED";
+        throw error;
+    }
+
     const headers = new Headers(options.headers || {});
     const isFormData =
         typeof FormData !== "undefined" &&
@@ -39,7 +45,10 @@ export async function apiRequest(path, options = {}) {
 
     if (!response.ok) {
         const message = data.message || "Request failed.";
-        throw new Error(message);
+        const error = new Error(message);
+        error.status = response.status;
+        error.code = data.code;
+        throw error;
     }
 
     return data;
