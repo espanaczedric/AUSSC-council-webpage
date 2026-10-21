@@ -13,7 +13,18 @@ function AdminDashboard() {
     useEffect(() => {
         getAdminEvents()
             .then(setOverview)
-            .catch((requestError) => setError(requestError.message))
+            .catch((requestError) => {
+                if (requestError.code === "API_URL_NOT_CONFIGURED") {
+                    setError("This frontend deployment is missing VITE_API_URL. In Vercel, add VITE_API_URL with your deployed backend address ending in /api, then redeploy the frontend.");
+                    return;
+                }
+                if (requestError.status === 401) {
+                    setError("Your administrator session has expired. Sign in again.");
+                    return;
+                }
+                const reference = requestError.requestId ? ` (Reference: ${requestError.requestId})` : "";
+                setError(`${requestError.message || "Could not load dashboard data."}${reference}`);
+            })
             .finally(() => setLoading(false));
     }, []);
 
@@ -48,7 +59,7 @@ function AdminDashboard() {
 
                 {error && (
                     <p className="admin-feedback is-error" role="alert">
-                        {error} Sign in with an administrator account and try again.
+                        {error}
                     </p>
                 )}
 
