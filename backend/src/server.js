@@ -39,6 +39,11 @@ app.use(cors({
     allowedHeaders: ["Content-Type", "Authorization"]
 }));
 app.use(express.json({ limit: "1mb" }));
+app.use((req, res, next) => {
+    req.requestId = crypto.randomUUID();
+    res.setHeader("X-Request-ID", req.requestId);
+    next();
+});
 
 class MongoSessionStore extends session.Store {
     constructor(collection = null) {
@@ -209,15 +214,34 @@ async function sendPasswordResetEmail(email, code) {
     }
 }
 
-app.get("/api/health", async (_req, res) => {
+app.get("/api/health", async (_req, res, next) => {
     if (!db) return fail(res, 503, "MongoDB is not connected.", { status: "not_ready", database: "mongodb" });
     try {
         await db.command({ ping: 1 });
+        await collections.users.findOne({}, { projection: { _id: 1 } });
+
+        // Exercise the collection operations used by login sessions without
+        // touching a real user's session. A TTL expiry cleans up if deletion fails.
+        const probeId = `health-${crypto.randomUUID()}`;
+        let probeInserted = false;
+        try {
+            await collections.sessions.insertOne({
+                _id: probeId,
+                data: {},
+                expiresAt: new Date(Date.now() + 60_000)
+            });
+            probeInserted = true;
+            await collections.sessions.findOne({ _id: probeId }, { projection: { _id: 1 } });
+            await collections.sessions.updateOne({ _id: probeId }, { $set: { updatedAt: new Date() } });
+        } finally {
+            if (probeInserted) await collections.sessions.deleteOne({ _id: probeId }).catch(() => {});
+        }
+
         databaseReady = true;
         return ok(res, null, { status: "ready", database: "mongodb" });
-    } catch {
+    } catch (error) {
         databaseReady = false;
-        return fail(res, 503, "MongoDB is not responding.", { status: "not_ready", database: "mongodb" });
+        return next(error);
     }
 });
 
@@ -1028,9 +1052,18 @@ app.post("/api/attendance/checkin", adminOnly, async (req, res, next) => {
     } catch (error) { return next(error); }
 });
 
-app.use((error, _req, res, _next) => {
+app.use((error, req, res, _next) => {
     if (res.headersSent) return;
-    console.error(error);
+    const requestId = req.requestId || crypto.randomUUID();
+    console.error(`[${requestId}] ${req.method} ${req.path} failed:`, error);
+    if (error?.code === 13 || error?.codeName === "Unauthorized") {
+        databaseReady = false;
+        return fail(res, 503, "The database account lacks permission to access sign-in data. Grant it read/write access to the configured database.", {
+            code: "DATABASE_PERMISSION_DENIED",
+            database: "mongodb",
+            request_id: requestId
+        });
+    }
     const mongoConnectionErrors = new Set([
         "MongoNetworkError",
         "MongoServerSelectionError",
@@ -1043,10 +1076,14 @@ app.use((error, _req, res, _next) => {
         databaseReady = false;
         return fail(res, 503, "The sign-in database is temporarily unavailable. Please try again shortly.", {
             code: "DATABASE_UNAVAILABLE",
-            database: "mongodb"
+            database: "mongodb",
+            request_id: requestId
         });
     }
-    return fail(res, 500, "The request could not be completed. Please try again.");
+    return fail(res, 500, "The request could not be completed. Please try again.", {
+        code: "INTERNAL_SERVER_ERROR",
+        request_id: requestId
+    });
 });
 
 async function connectDatabase() {

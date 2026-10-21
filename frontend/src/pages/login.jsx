@@ -64,9 +64,12 @@ function Login() {
             else navigate("/my-events");
         } catch (requestError) {
             console.error("Login error:", requestError);
-            if (requestError.code === "DATABASE_UNAVAILABLE") setDatabaseStatus("unavailable");
+            if (requestError.status >= 500 || requestError.code?.startsWith("DATABASE_")) {
+                setDatabaseStatus("unavailable");
+            }
             if (requestError.code === "API_URL_NOT_CONFIGURED") setDatabaseStatus("misconfigured");
-            setError(requestError.message || "Unable to connect. Check your connection and try again.");
+            const message = requestError.message || "Unable to connect. Check your connection and try again.";
+            setError(requestError.requestId ? `${message} (Reference: ${requestError.requestId})` : message);
         } finally {
             setLoading(false);
         }
@@ -79,7 +82,7 @@ function Login() {
                     <p className={`login-db-status is-${databaseStatus}`} role="status" aria-live="polite">
                         <span aria-hidden="true" />
                         {databaseStatus === "checking" && "Checking sign-in service…"}
-                        {databaseStatus === "connected" && "Database responding"}
+                        {databaseStatus === "connected" && "Sign-in database ready"}
                         {databaseStatus === "unavailable" && "Sign-in API or database is unavailable."}
                         {databaseStatus === "misconfigured" && "Sign-in API is not configured for this deployment."}
                     </p>
