@@ -78,7 +78,7 @@ export default function AdminNav() {
 
             <aside ref={asideRef} className={`admin-sidebar${menuOpen ? " is-open" : ""}`} aria-label="Council workspace">
                 <Link className="admin-sidebar-brand" to="/admin" aria-label="Council workspace overview" onClick={closeMenu}>
-                    <img src="/assets/aussc-header.png" alt="Araullo University South Student Council" />
+                    <img src="/assets/aussc-header-light.png" alt="Araullo University South Student Council" />
                     <span>COUNCIL WORKSPACE</span>
                 </Link>
 

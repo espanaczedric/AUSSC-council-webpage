@@ -38,7 +38,7 @@ export default function AuthLayout({ children, panelClassName = "" }) {
                 )}
                 <div className="login-story-shade" />
                 <Link to="/" className="login-story-logo" aria-label="Araullo University South Student Council home">
-                    <img src="/assets/aussc-header-pdf.png" alt="Araullo University South Student Council" />
+                    <img src="/assets/aussc-header-light.png" alt="Araullo University South Student Council" />
                 </Link>
                 <div className="login-story-bottom">
                     <strong>For the Students, We Remain</strong>
