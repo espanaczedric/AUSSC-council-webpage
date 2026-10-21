@@ -87,6 +87,10 @@ export async function updateAdminEvent(id, formData) {
     });
 }
 
+export async function reviewAdminEvent(eventId, decision) {
+    return apiRequest("/admin/events/review", { method: "POST", credentials: "include", body: JSON.stringify({ event_id: eventId, decision }) });
+}
+
 export async function deleteAdminEvent(id) {
     return apiRequest("/admin/events/delete", {
         method: "POST",
@@ -101,10 +105,56 @@ export async function getAdminRegistrations() {
     });
 }
 
+export async function getAdminAttendance(eventId = "") {
+    const query = eventId ? `?event_id=${encodeURIComponent(eventId)}` : "";
+    return apiRequest(`/admin/attendance${query}`, { credentials: "include" });
+}
+
 export async function getAdminUsers() {
     return apiRequest("/admin/users", {
         credentials: "include"
     });
+}
+
+export async function getMyEventAssignments() {
+    return apiRequest("/participation/mine", { credentials: "include" });
+}
+
+export async function signUpForEventAssignment(eventId) {
+    return apiRequest("/participation/signup", { method: "POST", credentials: "include", body: JSON.stringify({ event_id: eventId }) });
+}
+
+export async function getCommitteeWork(committee) {
+    const query = committee ? `?committee=${encodeURIComponent(committee)}` : "";
+    return apiRequest(`/admin/committee-work${query}`, { credentials: "include" });
+}
+
+export async function saveCommitteeWork(item) {
+    return apiRequest("/admin/committee-work/save", { method: "POST", credentials: "include", body: JSON.stringify(item) });
+}
+
+export async function deleteCommitteeWork(id) {
+    return apiRequest("/admin/committee-work/delete", { method: "POST", credentials: "include", body: JSON.stringify({ id }) });
+}
+
+export async function updateCommitteeChecklist(id, label, done) {
+    return apiRequest("/admin/committee-work/checklist", { method: "POST", credentials: "include", body: JSON.stringify({ id, label, done }) });
+}
+
+export async function reviewEventAssignment(id, status) {
+    return apiRequest("/admin/participation/review", { method: "POST", credentials: "include", body: JSON.stringify({ id, status }) });
+}
+
+export async function getPublicFinancialReports() {
+    return apiRequest("/transparency/reports");
+}
+
+export async function getAdminFinancialRecords() {
+    return apiRequest("/admin/finance", { credentials: "include" });
+}
+
+export async function saveAdminFinancialRecord(record) {
+    return apiRequest("/admin/finance/save", { method: "POST", credentials: "include", body: JSON.stringify(record) });
 }
 
 export async function getAdminHighlights() {

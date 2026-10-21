@@ -25,6 +25,13 @@ function CreateEvent({ editMode = false }) {
         end_date: "",
         registration_deadline: "",
         capacity: "",
+        assignment_capacity: "",
+        participation_open: true,
+        participation_requirements: "",
+        eligible_courses: "",
+        eligible_year_levels: "",
+        require_event_registration: false,
+        publication_status: "draft",
         status: "upcoming"
     });
     const [coverImage, setCoverImage] = useState(null);
@@ -55,6 +62,13 @@ function CreateEvent({ editMode = false }) {
                     end_date: toDateTimeLocal(event.end_date),
                     registration_deadline: toDateTimeLocal(event.registration_deadline),
                     capacity: String(event.capacity ?? ""),
+                    assignment_capacity: String(event.assignment_capacity || ""),
+                    participation_open: event.participation_open !== false,
+                    participation_requirements: event.participation_requirements || "",
+                    eligible_courses: (event.eligible_courses || []).join(", "),
+                    eligible_year_levels: (event.eligible_year_levels || []).join(", "),
+                    require_event_registration: Boolean(event.require_event_registration),
+                    publication_status: event.publication_status || "published",
                     status: event.status || "upcoming"
                 });
                 setExistingImage(getEventImageUrl(event.cover_image));
@@ -108,6 +122,8 @@ function CreateEvent({ editMode = false }) {
 
         try {
             const formData = new FormData(event.currentTarget);
+            formData.set("participation_open", form.participation_open ? "true" : "false");
+            formData.set("require_event_registration", form.require_event_registration ? "true" : "false");
             if (editMode) {
                 await updateAdminEvent(id, formData);
             } else {
@@ -286,9 +302,40 @@ function CreateEvent({ editMode = false }) {
                         </section>
 
                         <section className="admin-form-section">
+                            <div className="admin-section-heading"><div><span>03 · COUNCIL PARTICIPATION</span><h2>Manage event assignment sign-ups</h2></div></div>
+                            <div className="admin-form-grid">
+                                <label htmlFor="assignment-capacity">Assignment positions <span>0 means unlimited</span></label>
+                                <input id="assignment-capacity" type="number" min="0" max="10000" name="assignment_capacity" value={form.assignment_capacity} onChange={handleChange} placeholder="0" />
+                                <label htmlFor="eligible-courses">Eligible courses <span>Comma-separated; blank means all courses</span></label>
+                                <input id="eligible-courses" name="eligible_courses" value={form.eligible_courses} onChange={handleChange} placeholder="BSIT, BSBA" />
+                                <label htmlFor="eligible-years">Eligible year levels <span>Comma-separated; blank means all years</span></label>
+                                <input id="eligible-years" name="eligible_year_levels" value={form.eligible_year_levels} onChange={handleChange} placeholder="1st Year, 2nd Year" />
+                            </div>
+                            <label htmlFor="participation-requirements">Participation requirements</label>
+                            <textarea id="participation-requirements" name="participation_requirements" rows={3} maxLength={1000} value={form.participation_requirements} onChange={handleChange} placeholder="Describe the responsibilities and expectations for members." />
+                            <div className="event-participation-toggles">
+                                <label><input type="checkbox" checked={form.participation_open} onChange={(event) => setForm((current) => ({ ...current, participation_open: event.target.checked }))} /> Allow member assignment sign-ups</label>
+                                <label><input type="checkbox" checked={form.require_event_registration} onChange={(event) => setForm((current) => ({ ...current, require_event_registration: event.target.checked }))} /> Require event registration before assignment sign-up</label>
+                            </div>
+                        </section>
+
+                        <section className="admin-form-section">
+                            <div className="admin-section-heading"><div><span>04 · PUBLICATION REVIEW</span><h2>Set the event’s release status</h2></div></div>
+                            <label htmlFor="event-publication-status">Publication status</label>
+                            <select id="event-publication-status" name="publication_status" value={form.publication_status} onChange={handleChange}>
+                                <option value="draft">Draft · private to council</option>
+                                <option value="pending_approval">Pending approval · send to executive queue</option>
+                                {editMode && <option value="published">Published</option>}
+                                {editMode && <option value="cancelled">Cancelled</option>}
+                                {editMode && <option value="archived">Archived</option>}
+                            </select>
+                            {form.publication_status === "pending_approval" && <p className="event-review-note">Students will not see this event until an executive member approves it.</p>}
+                        </section>
+
+                        <section className="admin-form-section">
                             <div className="admin-section-heading">
                                 <div>
-                                    <span>03 · COVER IMAGE</span>
+                                    <span>05 · COVER IMAGE</span>
                                     <h2>Choose the event thumbnail</h2>
                                 </div>
                             </div>
@@ -312,7 +359,7 @@ function CreateEvent({ editMode = false }) {
                             <button className="admin-primary-action" type="submit" disabled={saving}>
                                 {saving
                                     ? editMode ? "Saving…" : "Publishing…"
-                                    : editMode ? "Save changes" : "Publish event"}
+                                : editMode ? "Save changes" : form.publication_status === "pending_approval" ? "Submit for approval" : "Save draft"}
                             </button>
                         </div>
                     </form>

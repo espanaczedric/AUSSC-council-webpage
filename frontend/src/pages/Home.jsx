@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 import Navbar from "../components/Navbar";
 import EventHero from "../components/EventHero";
@@ -104,6 +105,16 @@ function Home() {
                         <article><span>03</span><h3>Publication</h3><p>Creative work and student communications</p></article>
                         <article><span>04</span><h3>Program</h3><p>Activities and event experiences</p></article>
                     </div>
+                </section>
+
+                <section className="home-transparency-preview" aria-labelledby="home-transparency-title">
+                    <div className="home-transparency-mark" aria-hidden="true">A</div>
+                    <div className="home-transparency-copy">
+                        <span className="eyebrow">Open governance</span>
+                        <h2 id="home-transparency-title">Council work should be clear to students.</h2>
+                        <p>Visit the public reports page for council materials released for the student community.</p>
+                    </div>
+                    <Link to="/transparency" className="home-transparency-link">View public reports <span aria-hidden="true">→</span></Link>
                 </section>
 
 

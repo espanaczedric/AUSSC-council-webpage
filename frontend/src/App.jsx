@@ -11,6 +11,7 @@ import EventDetailsPage from "./pages/EventDetailsPage";
 import Announcements from "./pages/Announcements";
 import CommitteeDirectory from "./pages/CommitteeDirectory";
 import AboutCouncil from "./pages/AboutCouncil";
+import Transparency from "./pages/Transparency";
 
 // Registration
 import Register from "./pages/Register";
@@ -21,6 +22,7 @@ import MyEvents from "./pages/MyEvents";
 import Login from "./pages/login";
 import RegisterAccount from "./pages/RegisterAccount";
 import ForgotPassword from "./pages/ForgotPassword";
+import CouncilProfile from "./pages/CouncilProfile";
 
 // Admin Pages
 import AdminDashboard from "./pages/admin/AdminDashboard";
@@ -32,6 +34,8 @@ import Attendance from "./pages/admin/Attendance";
 import QRScannerPage from "./pages/admin/QRScannerPage";
 import EventHighlightsManager from "./pages/admin/EventHighlightsManager";
 import Users from "./pages/admin/Users";
+import CommitteeWorkspace from "./pages/admin/CommitteeWorkspace";
+import AdminFinance from "./pages/admin/AdminFinance";
 
 function NotFound() {
     return (
@@ -65,6 +69,7 @@ function App() {
 
                 <Route path="/announcements" element={<Announcements />} />
                 <Route path="/committees" element={<CommitteeDirectory />} />
+                <Route path="/transparency" element={<Transparency />} />
                 <Route path="/about" element={<AboutCouncil />} />
 
                 <Route
@@ -91,6 +96,8 @@ function App() {
                     path="/forgot-password"
                     element={<ForgotPassword />}
                 />
+
+                <Route path="/profile" element={<CouncilProfile />} />
 
 
                 {/* =========================
@@ -161,6 +168,9 @@ function App() {
                     path="/admin/users"
                     element={<Users />}
                 />
+
+                <Route path="/admin/committees/:committee" element={<CommitteeWorkspace />} />
+                <Route path="/admin/finance" element={<AdminFinance />} />
 
                 <Route path="*" element={<NotFound />} />
 

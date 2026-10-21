@@ -23,7 +23,7 @@ function AdminEvents() {
     }, []);
 
     const filteredEvents = events.filter((event) => {
-        const matchesStatus = statusFilter === "all" || event.status === statusFilter;
+        const matchesStatus = statusFilter === "all" || (event.publication_status || "published") === statusFilter;
         const normalizedQuery = query.trim().toLowerCase();
         const matchesQuery = !normalizedQuery ||
             `${event.title} ${event.location}`.toLowerCase().includes(normalizedQuery);
@@ -38,9 +38,9 @@ function AdminEvents() {
 
         try {
             const result = await deleteAdminEvent(event.id);
-            setEvents((current) => current.filter((item) => item.id !== event.id));
+            setEvents((current) => current.map((item) => item.id === event.id ? { ...item, publication_status: "archived" } : item));
             setPendingDeleteId(null);
-            setNotice(`${result.event_title} was removed.`);
+            setNotice(`${result.event_title} was archived. Historical records remain available.`);
         } catch (requestError) {
             setError(requestError.message);
         } finally {
@@ -82,10 +82,11 @@ function AdminEvents() {
                                 onChange={(event) => setStatusFilter(event.target.value)}
                             >
                                 <option value="all">All statuses</option>
-                                <option value="upcoming">Upcoming</option>
-                                <option value="ongoing">Happening now</option>
-                                <option value="completed">Completed</option>
+                                <option value="draft">Draft</option>
+                                <option value="pending_approval">Pending approval</option>
+                                <option value="published">Published</option>
                                 <option value="cancelled">Cancelled</option>
+                                <option value="archived">Archived</option>
                             </select>
                         </label>
                     </div>
@@ -104,11 +105,9 @@ function AdminEvents() {
                                         className="admin-event-thumb"
                                     />
                                     <div className="admin-event-main">
-                                        <span className={`admin-status is-${event.status}`}>
-                                            {event.status === "ongoing" ? "Happening now" : event.status}
-                                        </span>
+                                        <span className={`admin-status is-${event.publication_status || "published"}`}>{(event.publication_status || "published").replace("_", " ")}</span>
                                         <h2>{event.title}</h2>
-                                        <p>{event.location}</p>
+                                        <p>{event.location} · {event.status === "ongoing" ? "Happening now" : event.status}</p>
                                     </div>
                                     <div className="admin-event-date">
                                         <span>STARTS</span>
@@ -128,23 +127,23 @@ function AdminEvents() {
                                         <Link className="admin-text-link" to={`/admin/events/${event.id}/edit`}>
                                             Edit
                                         </Link>
-                                        <Link className="admin-text-link" to={`/events/${event.id}`}>
-                                            View
-                                        </Link>
+                                        {(event.publication_status || "published") === "published" && <Link className="admin-text-link" to={`/events/${event.id}`}>View</Link>}
+                                        {(event.publication_status || "published") !== "archived" && <>
                                         <button
                                             className="admin-text-link is-danger"
                                             type="button"
                                             aria-expanded={pendingDeleteId === event.id}
                                             onClick={() => setPendingDeleteId((current) => current === event.id ? null : event.id)}
                                         >
-                                            Remove
+                                            Archive
                                         </button>
+                                        </>}
                                     </div>
                                     {pendingDeleteId === event.id && (
-                                        <div className="admin-delete-confirmation" role="group" aria-label={`Confirm removal of ${event.title}`}>
+                                        <div className="admin-delete-confirmation" role="group" aria-label={`Confirm archive of ${event.title}`}>
                                             <div>
-                                                <strong>Remove “{event.title}” permanently?</strong>
-                                                <p>All linked registrations, attendance records, schedules, and highlights will also be deleted.</p>
+                                                <strong>Archive “{event.title}”?</strong>
+                                                <p>It will leave public listings while preserving registrations, attendance, and linked financial history.</p>
                                             </div>
                                             <div>
                                                 <button
@@ -161,7 +160,7 @@ function AdminEvents() {
                                                     onClick={() => confirmDelete(event)}
                                                     disabled={deletingId === event.id}
                                                 >
-                                                    {deletingId === event.id ? "Removing…" : "Remove permanently"}
+                                                    {deletingId === event.id ? "Archiving…" : "Archive event"}
                                                 </button>
                                             </div>
                                         </div>

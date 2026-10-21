@@ -46,6 +46,7 @@ function NavigationIcon({ name }) {
         events: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>,
         updates: <><path d="M4 11v2a2 2 0 0 0 2 2h2l8 5V4l-8 5H6a2 2 0 0 0-2 2Z" /><path d="m8 15 2 6M19 9l2-2M19 15l2 2" /></>,
         committees: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="10" cy="7" r="4" /><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
+        transparency: <><path d="M4 19h16" /><path d="M7 15v-4M12 15V5M17 15V9" /><path d="M5 5h2M16 5h3" /></>,
         about: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></>
     };
 
@@ -281,6 +282,7 @@ function Navbar() {
                         { label: "Events", to: "/events", icon: "events" },
                         { label: "Updates", to: "/announcements", icon: "updates" },
                         { label: "Committees", to: "/committees", icon: "committees" },
+                        { label: "Transparency", to: "/transparency", icon: "transparency" },
                         { label: "About", to: "/about", icon: "about" }
                     ].map(({ label, to, icon, end }) => (
                         <NavLink key={to} to={to} end={end} title={label} aria-label={label} onClick={() => setMenuOpen(false)}>
@@ -330,7 +332,16 @@ function Navbar() {
 
                                 {user ? <>
                                 {/* ---- HEADER ---- */}
-                                <div className="navbar-dropdown-header">
+                                <Link
+                                    to="/profile"
+                                    className="navbar-dropdown-header navbar-dropdown-profile-link"
+                                    aria-label={`Open profile for ${user.first_name || "your"} ${user.last_name || "account"}`}
+                                    onClick={() => {
+                                        setDropdownOpen(false);
+                                        setDetailsVisible(false);
+                                        setMenuOpen(false);
+                                    }}
+                                >
                                     <div className="navbar-dropdown-avatar">
                                         {getUserInitials(user)}
                                     </div>
@@ -342,7 +353,8 @@ function Navbar() {
                                             {user.email}
                                         </span>
                                     </div>
-                                </div>
+                                    <span className="navbar-dropdown-profile-cta">Profile <span aria-hidden="true">→</span></span>
+                                </Link>
 
 
                                 {/* ---- SEE DETAILS ---- */}

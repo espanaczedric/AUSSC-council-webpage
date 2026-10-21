@@ -4,9 +4,9 @@ import {
     Html5QrcodeSupportedFormats
 } from "html5-qrcode";
 
-import { apiRequest } from "../services/api";
+import { apiRequest, getAdminAttendance, getAdminEvents } from "../services/api";
 
-function CameraScanner({ onDecoded }) {
+function CameraScanner({ onDecoded, disabled = false }) {
     const readerId = `qr-camera-${useId().replace(/:/g, "")}`;
     const scannerRef = useRef(null);
     const decodedRef = useRef(onDecoded);
@@ -140,7 +140,7 @@ function CameraScanner({ onDecoded }) {
                         className="admin-primary-action"
                         type="button"
                         onClick={startCamera}
-                        disabled={cameraState === "starting" || cameraState === "checking"}
+                        disabled={disabled || cameraState === "starting" || cameraState === "checking"}
                     >
                         {cameraState === "starting" ? "Opening camera…" : "Start camera"}
                     </button>
@@ -167,7 +167,21 @@ function formatDateTime(value) {
 function QRScanner() {
     const [result, setResult] = useState(null);
     const [verifying, setVerifying] = useState(false);
-    const [manualCode, setManualCode] = useState("");
+    const [memberQuery, setMemberQuery] = useState("");
+    const [memberMatches, setMemberMatches] = useState([]);
+    const [searchingMembers, setSearchingMembers] = useState(false);
+    const [eventId, setEventId] = useState("");
+    const [events, setEvents] = useState([]);
+    const [attendanceCount, setAttendanceCount] = useState(0);
+
+    useEffect(() => {
+        getAdminEvents().then((data) => setEvents(data.events || [])).catch(() => {});
+    }, []);
+
+    useEffect(() => {
+        if (!eventId) { setAttendanceCount(0); return; }
+        getAdminAttendance(eventId).then((data) => setAttendanceCount(data.count || 0)).catch(() => {});
+    }, [eventId]);
 
     async function verifyRegistration(registrationCode) {
         setVerifying(true);
@@ -176,16 +190,20 @@ function QRScanner() {
             const data = await apiRequest("/attendance/checkin", {
                 method: "POST",
                 credentials: "include",
-                body: JSON.stringify({ registration_code: registrationCode })
+                body: JSON.stringify({ registration_code: registrationCode, ...(eventId ? { event_id: Number(eventId) } : {}) })
             });
 
             setResult({
                 kind: data.success ? "verified" :
+                    data.wrong_event ? "wrong-event" :
                     data.already_checked_in ? "duplicate" :
                         data.attendee ? "cancelled" : "invalid",
                 data,
                 message: data.message
             });
+            if (data.success) {
+                getAdminAttendance(eventId).then((attendance) => setAttendanceCount(attendance.count || 0)).catch(() => {});
+            }
         } catch (error) {
             setResult({
                 kind: "invalid",
@@ -196,20 +214,28 @@ function QRScanner() {
         }
     }
 
-    function handleManualSubmit(event) {
+    async function handleManualSubmit(event) {
         event.preventDefault();
-        const registrationCode = manualCode.trim();
-        if (registrationCode) {
-            verifyRegistration(registrationCode);
-        }
+        if (!eventId || memberQuery.trim().length < 2) return;
+        setSearchingMembers(true);
+        setMemberMatches([]);
+        try {
+            const data = await apiRequest(`/admin/attendance/lookup?event_id=${encodeURIComponent(eventId)}&q=${encodeURIComponent(memberQuery.trim())}`, { credentials: "include" });
+            setMemberMatches(data.matches || []);
+        } catch (error) {
+            setResult({ kind: "invalid", message: error.message || "Member lookup failed." });
+        } finally { setSearchingMembers(false); }
     }
 
     const resultTitle = result?.kind === "verified" ? "Checked in" :
+        result?.kind === "wrong-event" ? "Wrong event" :
         result?.kind === "duplicate" ? "Already checked in" :
             result?.kind === "cancelled" ? "Registration cancelled" : "QR not verified";
 
     return (
         <div className="qr-checkin-workspace" aria-live="polite">
+            <label className="qr-event-select">Confirm event before scanning<select required value={eventId} onChange={(event) => setEventId(event.target.value)}><option value="">Choose an event…</option>{events.map((event) => <option key={event.id} value={event.id}>{event.title}</option>)}</select><span>Passes for a different event will be rejected. Select the event the check-in team is serving.</span></label>
+            {eventId && <p className="qr-event-attendance-count" role="status">{attendanceCount} member{attendanceCount === 1 ? "" : "s"} checked in for this event</p>}
             {verifying ? (
                 <section className="qr-verification-pending" role="status">
                     <span className="qr-result-symbol" aria-hidden="true">…</span>
@@ -272,30 +298,34 @@ function QRScanner() {
                     <p className="qr-result-message">{result.message}</p>
                     <button className="admin-primary-action" type="button" onClick={() => {
                         setResult(null);
-                        setManualCode("");
+                        setMemberQuery("");
+                        setMemberMatches([]);
                     }}>
                         Scan another QR
                     </button>
                 </section>
             ) : (
                 <>
-                    <CameraScanner onDecoded={verifyRegistration} />
+                    <CameraScanner onDecoded={verifyRegistration} disabled={!eventId} />
                     <form className="qr-manual-form" onSubmit={handleManualSubmit}>
-                        <label htmlFor="registration-code">Registration code</label>
+                        <label htmlFor="member-lookup">Manual member lookup</label>
                         <div>
                             <input
-                                id="registration-code"
-                                value={manualCode}
-                                onChange={(event) => setManualCode(event.target.value)}
-                                placeholder="REG-XXXXXXXXXXXX"
+                                id="member-lookup"
+                                value={memberQuery}
+                                onChange={(event) => setMemberQuery(event.target.value)}
+                                placeholder="Name, student ID, or PHINMA email"
                                 autoComplete="off"
                                 required
+                                disabled={!eventId}
                             />
-                            <button className="admin-secondary-action" type="submit">
-                                Verify code
+                            <button className="admin-secondary-action" type="submit" disabled={!eventId || searchingMembers}>
+                                {searchingMembers ? "Searching…" : "Find member"}
                             </button>
                         </div>
                     </form>
+                    {memberMatches.length > 0 && <div className="qr-member-matches" aria-live="polite">{memberMatches.map((member) => <article key={member.registration_code}><div><strong>{member.name}</strong><span>{member.student_id} · {member.email}</span><small>Registration: {member.status}</small></div><button className="admin-primary-action" type="button" disabled={member.status === "attended"} onClick={() => verifyRegistration(member.registration_code)}>{member.status === "attended" ? "Already checked in" : "Verify & check in"}</button></article>)}</div>}
+                    {!searchingMembers && memberQuery.length >= 2 && memberMatches.length === 0 && !result && <p className="admin-feedback">No active registration matched this member and event.</p>}
                 </>
             )}
         </div>

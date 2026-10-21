@@ -19,7 +19,7 @@ function AdminDashboard() {
 
     const stats = overview?.stats || {};
     const upcomingEvents = (overview?.events || [])
-        .filter((event) => ["upcoming", "ongoing"].includes(event.status))
+        .filter((event) => ["upcoming", "ongoing"].includes(event.status) && [undefined, "published"].includes(event.publication_status))
         .sort((first, second) => new Date(first.start_date) - new Date(second.start_date))
         .slice(0, 4);
 
