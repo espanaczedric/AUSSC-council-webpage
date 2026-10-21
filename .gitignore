@@ -1,5 +1,17 @@
-**/node_modules/
+# macOS
+.DS_Store
+
+# Environment and secrets
 **/.env
+**/.env.*
+!**/.env.example
+
+# Node
+**/node_modules/
+frontend/dist/
+
+# Uploads and generated files
 backend/uploads/
 uploads/
 **/target/
+*.save
