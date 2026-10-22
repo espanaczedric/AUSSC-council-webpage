@@ -67,6 +67,9 @@ app.use((req, res, next) => {
 });
 app.use(async (req, res, next) => {
     if (process.env.VERCEL !== "1") return next();
+    // Let health checks run during an Atlas outage so they can return a safe
+    // diagnostic category instead of this middleware's generic 503 response.
+    if (req.path === "/api/health") return next();
 
     const missingConfiguration = [];
     if (!process.env.MONGODB_URI?.trim()) missingConfiguration.push("MONGODB_URI");
@@ -85,7 +88,7 @@ app.use(async (req, res, next) => {
     } catch (error) {
         console.error("Vercel API could not connect to MongoDB:", error.message);
         return fail(res, 503, "The database is temporarily unavailable. Check the MongoDB Atlas network access and API environment settings.", {
-            code: "DATABASE_UNAVAILABLE",
+            code: mongoFailureCode(error),
             database: "mongodb",
             request_id: req.requestId
         });
@@ -168,6 +171,35 @@ const councilCommittees = new Set(["executive", "publication", "program", "produ
 const registrationCode = () => `REG-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
 const ok = (res, message, extra = {}) => res.status(200).json(toApi({ success: true, ...(message ? { message } : {}), ...extra }));
 const fail = (res, status, message, extra = {}) => res.status(status).json({ success: false, message, ...extra });
+
+function mongoFailureCode(error) {
+    const details = [];
+    const seen = new Set();
+    const pending = [error];
+    while (pending.length) {
+        const current = pending.pop();
+        if (!current || typeof current !== "object" || seen.has(current)) continue;
+        seen.add(current);
+        details.push(`${current.name || ""} ${current.codeName || ""} ${current.code || ""} ${current.message || ""}`);
+        pending.push(current.cause);
+        const servers = current.reason?.servers;
+        if (servers instanceof Map) {
+            for (const server of servers.values()) pending.push(server.error);
+        }
+    }
+    const text = details.join(" ").toLowerCase();
+    if (/authenticationfailed|bad auth|authentication failed|auth failed/.test(text) || /\bcode 18\b/.test(text)) {
+        return "MONGODB_AUTHENTICATION_FAILED";
+    }
+    if (/unauthorized|not authorized/.test(text) || /\bcode 13\b/.test(text)) {
+        return "MONGODB_PERMISSION_DENIED";
+    }
+    if (/querysrv|enotfound|eai_again|getaddrinfo/.test(text)) return "MONGODB_DNS_UNAVAILABLE";
+    if (/econnrefused|etimedout|ehostunreach|enetunreach|mongonetworkerror|mongoserverselectionerror/.test(text)) {
+        return "MONGODB_NETWORK_UNAVAILABLE";
+    }
+    return "MONGODB_CONNECTION_FAILED";
+}
 const signedIn = (req, res, next) => req.session?.userId ? next() : fail(res, 401, "You must be signed in to continue.");
 
 function hasExecutiveAccess(user) {
@@ -357,9 +389,20 @@ async function sendPasswordResetEmail(email, code) {
     }
 }
 
-app.get("/api/health", async (_req, res, next) => {
-    if (!db) return fail(res, 503, "MongoDB is not connected.", { status: "not_ready", database: "mongodb" });
+app.get("/api/health", async (req, res) => {
+    const missingConfiguration = [];
+    if (process.env.VERCEL === "1") {
+        if (!process.env.MONGODB_URI?.trim()) missingConfiguration.push("MONGODB_URI");
+        if ((process.env.SESSION_SECRET || "").trim().length < 32) missingConfiguration.push("SESSION_SECRET");
+    }
+    if (missingConfiguration.length) {
+        return fail(res, 503, "The API deployment is missing required environment variables.", {
+            status: "not_ready", database: "mongodb", code: "DEPLOYMENT_CONFIGURATION_MISSING",
+            missing_environment_variables: missingConfiguration, request_id: req.requestId
+        });
+    }
     try {
+        await ensureDatabaseConnection();
         await db.command({ ping: 1 });
         await collections.users.findOne({}, { projection: { _id: 1 } });
 
@@ -384,7 +427,10 @@ app.get("/api/health", async (_req, res, next) => {
         return ok(res, null, { status: "ready", database: "mongodb" });
     } catch (error) {
         databaseReady = false;
-        return next(error);
+        console.error("MongoDB health check failed:", error.message);
+        return fail(res, 503, "MongoDB is not ready. Use the diagnostic code to check Atlas access, credentials, and database permissions.", {
+            status: "not_ready", database: "mongodb", code: mongoFailureCode(error), request_id: req.requestId
+        });
     }
 });
 
