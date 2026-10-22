@@ -3618,6 +3618,7 @@ select:focus-visible, textarea:focus-visible {
 .login-db-status.is-connected > span { background: #2a9b69; }
 .login-db-status.is-unavailable, .login-db-status.is-misconfigured { color: #a74436; }
 .login-db-status.is-unavailable > span, .login-db-status.is-misconfigured > span { background: #d65649; }
+.login-db-diagnostic { margin: -14px 0 20px 16px; color: #8f463d; font-size: .72rem; line-height: 1.45; overflow-wrap: anywhere; }
 .login-redesign-form { gap: 8px; }
 .login-redesign-form > label { margin-top: 8px; color: #293b54; font-size: .82rem; font-weight: 750; }
 .login-redesign-form input:not([type="checkbox"]) { min-height: 50px; padding: 12px 15px; border: 1px solid #e7e9ee; border-radius: 11px; background: #fbfaf8; color: #172a42; font-size: .9rem; }

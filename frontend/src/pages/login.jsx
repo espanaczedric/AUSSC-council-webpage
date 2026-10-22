@@ -15,6 +15,7 @@ function Login() {
     const [error, setError] = useState("");
     const [databaseStatus, setDatabaseStatus] = useState("checking");
     const [databaseDetail, setDatabaseDetail] = useState("");
+    const [databaseDiagnostic, setDatabaseDiagnostic] = useState("");
 
     useEffect(() => {
         let active = true;
@@ -25,11 +26,13 @@ function Login() {
                     const ready = data.database === "mongodb" && data.status === "ready";
                     setDatabaseStatus(ready ? "connected" : "unavailable");
                     setDatabaseDetail(ready ? "" : data.message || "The database is not ready yet.");
+                    setDatabaseDiagnostic(ready ? "" : formatDatabaseDiagnostic(data));
                 }
             } catch (error) {
                 if (active) {
                     setDatabaseStatus(error.code === "API_URL_NOT_CONFIGURED" ? "misconfigured" : "unavailable");
                     setDatabaseDetail(error.status === 503 ? error.message : "Could not reach the sign-in API. Check its deployment URL and availability.");
+                    setDatabaseDiagnostic(formatDatabaseDiagnostic(error));
                 }
             }
         }
@@ -74,10 +77,12 @@ function Login() {
             if (requestError.status >= 500 || requestError.code?.startsWith("DATABASE_")) {
                 setDatabaseStatus("unavailable");
                 setDatabaseDetail(requestError.message || "The database is temporarily unavailable.");
+                setDatabaseDiagnostic(formatDatabaseDiagnostic(requestError));
             }
             if (requestError.code === "API_URL_NOT_CONFIGURED") {
                 setDatabaseStatus("misconfigured");
                 setDatabaseDetail("");
+                setDatabaseDiagnostic("");
             }
             const message = requestError.message || "Unable to connect. Check your connection and try again.";
             setError(requestError.requestId ? `${message} (Reference: ${requestError.requestId})` : message);
@@ -97,6 +102,11 @@ function Login() {
                         {databaseStatus === "unavailable" && (databaseDetail || "Sign-in API or database is unavailable.")}
                         {databaseStatus === "misconfigured" && "Sign-in API is not configured for this deployment."}
                     </p>
+                    {databaseStatus === "unavailable" && databaseDiagnostic && (
+                        <p className="login-db-diagnostic" role="status" aria-live="polite">
+                            {databaseDiagnostic}
+                        </p>
+                    )}
 
                     <form className="login-form login-redesign-form" onSubmit={handleSubmit}>
                         {error && <p className="form-message is-error" role="alert">{error}</p>}
@@ -161,6 +171,18 @@ function Login() {
                     <p className="login-terms">By signing in, you agree to use this portal responsibly.</p>
         </AuthLayout>
     );
+}
+
+function formatDatabaseDiagnostic(source) {
+    const parts = [];
+    if (source.code && source.code !== "API_URL_NOT_CONFIGURED") {
+        parts.push(`Diagnostic code: ${source.code}`);
+    }
+    if (Array.isArray(source.missingEnvironmentVariables) && source.missingEnvironmentVariables.length) {
+        parts.push(`Missing: ${source.missingEnvironmentVariables.join(", ")}`);
+    }
+    if (source.requestId) parts.push(`Reference: ${source.requestId}`);
+    return parts.join(" · ");
 }
 
 export default Login;

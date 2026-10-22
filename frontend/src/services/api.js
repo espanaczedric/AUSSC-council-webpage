@@ -50,6 +50,7 @@ export async function apiRequest(path, options = {}) {
         const error = new Error(message);
         error.status = response.status;
         error.code = data.code;
+        error.missingEnvironmentVariables = data.missing_environment_variables;
         error.requestId = data.request_id || response.headers.get("X-Request-ID");
         throw error;
     }
