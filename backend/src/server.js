@@ -65,6 +65,32 @@ app.use((req, res, next) => {
     res.setHeader("X-Request-ID", req.requestId);
     next();
 });
+app.use(async (req, res, next) => {
+    if (process.env.VERCEL !== "1") return next();
+
+    const missingConfiguration = [];
+    if (!process.env.MONGODB_URI?.trim()) missingConfiguration.push("MONGODB_URI");
+    if ((process.env.SESSION_SECRET || "").trim().length < 32) missingConfiguration.push("SESSION_SECRET (at least 32 characters)");
+    if (missingConfiguration.length) {
+        return fail(res, 503, "The API deployment is missing required environment variables.", {
+            code: "DEPLOYMENT_CONFIGURATION_MISSING",
+            missing_environment_variables: missingConfiguration,
+            request_id: req.requestId
+        });
+    }
+
+    try {
+        await ensureDatabaseConnection();
+        return next();
+    } catch (error) {
+        console.error("Vercel API could not connect to MongoDB:", error.message);
+        return fail(res, 503, "The database is temporarily unavailable. Check the MongoDB Atlas network access and API environment settings.", {
+            code: "DATABASE_UNAVAILABLE",
+            database: "mongodb",
+            request_id: req.requestId
+        });
+    }
+});
 
 class MongoSessionStore extends session.Store {
     constructor(collection = null) {
@@ -2065,29 +2091,6 @@ async function connectWithRetry() {
     }
 }
 
-async function vercelHandler(req, res) {
-    const missingConfiguration = [];
-    if (!process.env.MONGODB_URI?.trim()) missingConfiguration.push("MONGODB_URI");
-    if ((process.env.SESSION_SECRET || "").trim().length < 32) missingConfiguration.push("SESSION_SECRET (at least 32 characters)");
-    if (missingConfiguration.length) {
-        return fail(res, 503, "The API deployment is missing required environment variables.", {
-            code: "DEPLOYMENT_CONFIGURATION_MISSING",
-            missing_environment_variables: missingConfiguration
-        });
-    }
-
-    try {
-        await ensureDatabaseConnection();
-        return app(req, res);
-    } catch (error) {
-        console.error("Vercel API could not connect to MongoDB:", error.message);
-        return fail(res, 503, "The database is temporarily unavailable. Check the MongoDB Atlas network access and API environment settings.", {
-            code: "DATABASE_UNAVAILABLE",
-            database: "mongodb"
-        });
-    }
-}
-
 const isDirectExecution = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isDirectExecution) {
     start().catch((error) => {
@@ -2096,4 +2099,4 @@ if (isDirectExecution) {
     });
 }
 
-export default vercelHandler;
+export default app;

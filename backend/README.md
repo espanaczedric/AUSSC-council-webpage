@@ -25,9 +25,9 @@ The command creates the admin account or updates the matching email/student ID. 
 
 ## Vercel deployment (no separate Render service)
 
-Import the GitHub repository into Vercel and set the project Root Directory to the repository root (`.`), with “Include files outside the root directory” enabled if Vercel shows that option. Keep the Framework Preset as Vite or Other; the checked-in `vercel.json` supplies the build command (`npm run build`), output directory (`frontend/dist`), and API function route. The root workspace lockfile keeps frontend and backend installs reproducible. Node.js 22 is selected in the root `package.json`.
+Commit and push the root `vercel.json` before starting or refreshing Vercel's importer; Vercel reads configuration from the Git branch, not unpushed local files. Import the repository as a **multi-service project**, with the project root at the repository root (`./`) and Framework Preset **Services**. The root config defines the `frontend` Vite service and `backend` Express service and routes `/api/*` and `/uploads/*` to Express; all other paths go to the React app. The frontend service rewrites deep links to `index.html`. Each service installs from its own package manifest and lockfile and uses Node.js 22.
 
-The frontend and Express API deploy together: browser requests use the same-domain `/api` function, so do not set `VITE_API_URL` for this setup. Add these backend environment variables in Vercel under Project Settings → Environment Variables for every environment you intend to deploy (Production, Preview, and Development as applicable):
+The services share one deployment domain and environment variables, so do not set `VITE_API_URL`. Add these backend environment variables in Vercel under Project Settings → Environment Variables for every environment you intend to deploy (Production, Preview, and Development as applicable):
 
 - `MONGODB_URI` — the Atlas connection URI.
 - `MONGODB_DATABASE` — the database name.
