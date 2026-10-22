@@ -2,6 +2,9 @@
   "name": "university-events-platform",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "workspaces": ["frontend", "backend"],
   "scripts": {
     "dev": "node scripts/dev.js",

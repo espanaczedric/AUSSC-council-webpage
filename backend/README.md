@@ -25,7 +25,9 @@ The command creates the admin account or updates the matching email/student ID. 
 
 ## Vercel deployment (no separate Render service)
 
-Set the Vercel project Root Directory to the repository root (`.`), then deploy using the checked-in `vercel.json`. The frontend uses the same-domain `/api` function in production, so it does not need a `VITE_API_URL` value. Add these backend environment variables in Vercel for Production and Preview as needed:
+Import the GitHub repository into Vercel and set the project Root Directory to the repository root (`.`), with “Include files outside the root directory” enabled if Vercel shows that option. Keep the Framework Preset as Vite or Other; the checked-in `vercel.json` supplies the build command (`npm run build`), output directory (`frontend/dist`), and API function route. The root workspace lockfile keeps frontend and backend installs reproducible. Node.js 22 is selected in the root `package.json`.
+
+The frontend and Express API deploy together: browser requests use the same-domain `/api` function, so do not set `VITE_API_URL` for this setup. Add these backend environment variables in Vercel under Project Settings → Environment Variables for every environment you intend to deploy (Production, Preview, and Development as applicable):
 
 - `MONGODB_URI` — the Atlas connection URI.
 - `MONGODB_DATABASE` — the database name.
@@ -35,6 +37,10 @@ Set the Vercel project Root Directory to the repository root (`.`), then deploy 
 - `PASSWORD_RESET_SECRET` — a separate random secret for password reset codes.
 - `BREVO_API_KEY` and `BREVO_SENDER_EMAIL` for password recovery email.
 
-Event cover images are stored in MongoDB GridFS on Vercel so they persist across function invocations. Locally, covers continue to use the `uploads` directory. Check `https://<your-vercel-domain>/api/health` after deployment.
+Generate separate, strong random values for `SESSION_SECRET` and `PASSWORD_RESET_SECRET`; never paste secrets into source files or commit `.env`. `SESSION_COOKIE_SECURE` should be `true` on Vercel. Set the Brevo variables only if password recovery email should be enabled; the sender address must be verified in Brevo.
+
+Event covers and profile media use MongoDB GridFS on Vercel so uploads persist across function invocations. Locally, uploads continue to use the `uploads` directory. After the first deployment, open `https://<your-vercel-domain>/api/health`; it should return `status: "ready"` and `database: "mongodb"`. Then verify account sign-in, password reset email, profile image upload, event cover upload, and QR check-in on the deployed domain.
 
 For Atlas connectivity, allow the **Vercel Function's outbound IP** in Atlas Network Access and allow outbound TCP traffic on ports `27015`–`27017`. Vercel's normal function egress uses changing IP addresses; Vercel Static IPs are available on Pro and Enterprise plans. Configure static egress for the project and add its assigned addresses to Atlas. Adding a developer's laptop IP does not authorize a deployed function unless it exits through that same address. Avoid opening Atlas to every IP as a workaround.
+
+For a new database, create the first administrator using the local `create:admin` command above with the production MongoDB database selected. Do not add `ADMIN_PASSWORD` to Vercel; it is only used by that one-time local command.

@@ -2066,6 +2066,16 @@ async function connectWithRetry() {
 }
 
 async function vercelHandler(req, res) {
+    const missingConfiguration = [];
+    if (!process.env.MONGODB_URI?.trim()) missingConfiguration.push("MONGODB_URI");
+    if ((process.env.SESSION_SECRET || "").trim().length < 32) missingConfiguration.push("SESSION_SECRET (at least 32 characters)");
+    if (missingConfiguration.length) {
+        return fail(res, 503, "The API deployment is missing required environment variables.", {
+            code: "DEPLOYMENT_CONFIGURATION_MISSING",
+            missing_environment_variables: missingConfiguration
+        });
+    }
+
     try {
         await ensureDatabaseConnection();
         return app(req, res);
