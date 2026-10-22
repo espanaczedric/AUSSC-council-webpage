@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import Navbar from "../components/Navbar";
+import ImageCropDialog from "../components/ImageCropDialog";
 import { getCurrentUser, getEventImageUrl, updateMyProfile } from "../services/api";
 import { committeeLabels, getCommitteeWorkspacePath, hasExecutiveAccess } from "../utils/workspaceAccess";
 
@@ -58,6 +59,7 @@ export default function CouncilProfile() {
     const [removeCover, setRemoveCover] = useState(false);
     const [profilePreview, setProfilePreview] = useState("");
     const [coverPreview, setCoverPreview] = useState("");
+    const [cropRequest, setCropRequest] = useState(null);
 
     useEffect(() => {
         let active = true;
@@ -140,6 +142,7 @@ export default function CouncilProfile() {
         setCoverFile(null);
         setRemoveProfile(false);
         setRemoveCover(false);
+        setCropRequest(null);
         setError("");
         setNotice("");
         setEditing(true);
@@ -152,6 +155,7 @@ export default function CouncilProfile() {
         setCoverFile(null);
         setRemoveProfile(false);
         setRemoveCover(false);
+        setCropRequest(null);
     }
 
     async function saveProfile(event) {
@@ -195,6 +199,21 @@ export default function CouncilProfile() {
 
     function choosePhoto(event, kind) {
         const file = event.target.files?.[0] || null;
+        event.target.value = "";
+        if (!file) return;
+        setError("");
+        if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+            setError("Choose a JPG, PNG, or WebP photo.");
+            return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            setError("Choose photos smaller than 5 MB each.");
+            return;
+        }
+        setCropRequest({ kind, file });
+    }
+
+    function applyCroppedPhoto(kind, file) {
         if (kind === "profile") {
             setProfileFile(file);
             setRemoveProfile(false);
@@ -202,6 +221,7 @@ export default function CouncilProfile() {
             setCoverFile(file);
             setRemoveCover(false);
         }
+        setCropRequest(null);
     }
 
     return (
@@ -236,7 +256,7 @@ export default function CouncilProfile() {
                         <form className="profile-edit-form" onSubmit={saveProfile}>
                             {error && <p className="profile-form-message is-error" role="alert">{error}</p>}
                             <section className="profile-photo-edit-section" aria-labelledby="profile-photo-heading">
-                                <div><span className="profile-edit-eyebrow">PERSONALIZE YOUR PROFILE</span><h3 id="profile-photo-heading">Photos</h3><p>Use JPG, PNG, or WebP images up to 5 MB each.</p></div>
+                                <div><span className="profile-edit-eyebrow">PERSONALIZE YOUR PROFILE</span><h3 id="profile-photo-heading">Photos</h3><p>Choose a photo to crop and reposition it. Use JPG, PNG, or WebP up to 5 MB.</p></div>
                                 <div className="profile-photo-edit-grid">
                                     <div className="profile-photo-control">
                                         <Avatar src={profileImage} initials={initials} className="is-editing" />
@@ -277,6 +297,7 @@ export default function CouncilProfile() {
 
                 {loading && <p className="council-profile-refresh" role="status">Refreshing account details…</p>}
             </main>
+            {cropRequest && <ImageCropDialog file={cropRequest.file} kind={cropRequest.kind} onCancel={() => setCropRequest(null)} onApply={applyCroppedPhoto} />}
         </>
     );
 }

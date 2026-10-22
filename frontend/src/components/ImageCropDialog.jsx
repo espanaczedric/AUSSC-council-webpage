@@ -37,6 +37,12 @@ export default function ImageCropDialog({ file, kind, onCancel, onApply }) {
     }, [isCover]);
 
     useEffect(() => {
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        return () => { document.body.style.overflow = previousOverflow; };
+    }, []);
+
+    useEffect(() => {
         function handleKeyDown(event) {
             if (event.key === "Escape" && !processing) onCancel();
         }
@@ -90,6 +96,17 @@ export default function ImageCropDialog({ file, kind, onCancel, onApply }) {
         setPosition({ x: 0, y: 0 });
     }
 
+    function nudgeCrop(event) {
+        const directions = { ArrowLeft: [-4, 0], ArrowRight: [4, 0], ArrowUp: [0, -4], ArrowDown: [0, 4] };
+        const direction = directions[event.key];
+        if (!direction || processing) return;
+        event.preventDefault();
+        setPosition((current) => ({
+            x: clamp(current.x + direction[0], -maxX, maxX),
+            y: clamp(current.y + direction[1], -maxY, maxY)
+        }));
+    }
+
     function applyCrop() {
         const image = imageRef.current;
         if (!image || !viewport.width || !viewport.height || !scale) return;
@@ -133,7 +150,7 @@ export default function ImageCropDialog({ file, kind, onCancel, onApply }) {
                         <h2 id="profile-crop-title">{title}</h2>
                         <p>Drag to reposition, then zoom in or out to frame it just right.</p>
                     </div>
-                    <button className="profile-crop-close" type="button" aria-label="Close photo editor" onClick={onCancel} disabled={processing}>×</button>
+                    <button className="profile-crop-close" type="button" aria-label="Close photo editor" onClick={onCancel} disabled={processing} autoFocus>×</button>
                 </header>
 
                 <div className="profile-crop-workspace">
@@ -145,7 +162,9 @@ export default function ImageCropDialog({ file, kind, onCancel, onApply }) {
                         onPointerUp={stopDrag}
                         onPointerCancel={stopDrag}
                         onLostPointerCapture={stopDrag}
-                        role="application"
+                        onKeyDown={nudgeCrop}
+                        tabIndex={0}
+                        role="group"
                         aria-label={`${title} crop area. Drag the image to reposition it.`}
                     >
                         <img
