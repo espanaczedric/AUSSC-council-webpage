@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 const COVER_ASPECT = 16 / 5;
 
@@ -141,7 +142,7 @@ export default function ImageCropDialog({ file, kind, onCancel, onApply }) {
         }, "image/jpeg", 0.92);
     }
 
-    return (
+    return createPortal((
         <div className="profile-crop-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !processing) onCancel(); }}>
             <section className="profile-crop-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-crop-title">
                 <header className="profile-crop-header">
@@ -198,5 +199,5 @@ export default function ImageCropDialog({ file, kind, onCancel, onApply }) {
                 </footer>
             </section>
         </div>
-    );
+    ), document.body);
 }

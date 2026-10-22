@@ -202,7 +202,9 @@ export default function CouncilProfile() {
         event.target.value = "";
         if (!file) return;
         setError("");
-        if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+        const supportedMimeType = ["image/jpeg", "image/png", "image/webp"].includes(file.type);
+        const supportedFileName = /\.(jpe?g|png|webp)$/i.test(file.name);
+        if (!supportedMimeType && !supportedFileName) {
             setError("Choose a JPG, PNG, or WebP photo.");
             return;
         }
