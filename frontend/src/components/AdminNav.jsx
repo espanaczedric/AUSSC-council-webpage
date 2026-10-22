@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, NavLink, useLocation } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { committeeLabels, hasExecutiveAccess } from "../utils/workspaceAccess";
+import { getEventImageUrl, logoutWithAnimation } from "../services/api";
 
 const links = [
     { label: "Overview", to: "/admin", end: true, icon: "overview" },
@@ -36,14 +38,36 @@ function AdminNavIcon({ name }) {
     return <svg {...common}>{paths[name]}</svg>;
 }
 
+function initialsFor(user) {
+    return `${user?.first_name?.[0] || ""}${user?.last_name?.[0] || ""}`.toUpperCase() || "U";
+}
+
 export default function AdminNav() {
     const [menuOpen, setMenuOpen] = useState(false);
     const asideRef = useRef(null);
     const toggleRef = useRef(null);
     const location = useLocation();
-    const current = links.find((link) => link.end
+    const navigate = useNavigate();
+    const [signingOut, setSigningOut] = useState(false);
+    const [user, setUser] = useState(() => {
+        try { return JSON.parse(localStorage.getItem("user") || "null"); } catch { return null; }
+    });
+    const syncUser = useCallback(() => {
+        try { setUser(JSON.parse(localStorage.getItem("user") || "null")); } catch { setUser(null); }
+    }, []);
+    useEffect(() => {
+        window.addEventListener("auth-change", syncUser);
+        return () => window.removeEventListener("auth-change", syncUser);
+    }, [syncUser]);
+
+    const isExecutive = hasExecutiveAccess(user);
+    const committeeLink = user?.committee_assignment && user.committee_assignment !== "executive"
+        ? [{ label: committeeLabels[user.committee_assignment] || "Committee workspace", to: `/admin/committees/${user.committee_assignment}`, icon: "people" }]
+        : [];
+    const visibleLinks = isExecutive ? links : committeeLink;
+    const current = visibleLinks.find((link) => link.end
         ? location.pathname === link.to
-        : location.pathname.startsWith(link.to)) || links[0];
+        : location.pathname.startsWith(link.to)) || visibleLinks[0] || links[0];
 
     useEffect(() => setMenuOpen(false), [location.pathname]);
 
@@ -72,20 +96,27 @@ export default function AdminNav() {
         setMenuOpen(false);
     }
 
+    async function handleSignOut() {
+        setSigningOut(true);
+        await logoutWithAnimation();
+        navigate("/");
+        window.dispatchEvent(new Event("app-logout-end"));
+    }
+
     return (
         <>
             <div className="admin-shell-spacer" aria-hidden="true" />
             {menuOpen && <button className="admin-sidebar-scrim" type="button" aria-label="Close admin navigation" onClick={closeMenu} />}
 
             <aside ref={asideRef} className={`admin-sidebar${menuOpen ? " is-open" : ""}`} aria-label="Council workspace">
-                <Link className="admin-sidebar-brand" to="/admin" aria-label="Council workspace overview" onClick={closeMenu}>
+                <Link className="admin-sidebar-brand" to={isExecutive ? "/admin" : committeeLink[0]?.to || "/"} aria-label="Council workspace" onClick={closeMenu}>
                     <img src="/assets/aussc-header-light.png" alt="Araullo University South Student Council" />
                     <span>COUNCIL WORKSPACE</span>
                 </Link>
 
                 <span className="admin-sidebar-label">MANAGEMENT</span>
                 <nav id="admin-navigation" className="admin-sidebar-nav" aria-label="Admin sections">
-                    {links.map((link) => (
+                    {visibleLinks.map((link) => (
                         <NavLink
                             key={link.to}
                             to={link.to}
@@ -100,8 +131,13 @@ export default function AdminNav() {
                 </nav>
 
                 <div className="admin-sidebar-footer">
-                    <div className="admin-sidebar-user-mark" aria-hidden="true">A</div>
-                    <div className="admin-sidebar-user-copy"><strong>Student Council</strong><span>Admin workspace</span></div>
+                    <Link to="/profile" className="admin-sidebar-profile" onClick={closeMenu} aria-label="View and edit your profile">
+                        <span className="admin-sidebar-user-mark" aria-hidden="true">
+                            {user?.profile_picture && <img src={getEventImageUrl(user.profile_picture)} alt="" crossOrigin="use-credentials" onError={(event) => event.currentTarget.remove()} />}
+                            <span>{initialsFor(user)}</span>
+                        </span>
+                        <span className="admin-sidebar-user-copy"><strong>{user?.first_name ? `${user.first_name} ${user.last_name || ""}`.trim() : "Student Council"}</strong><span>{isExecutive ? "Executive workspace" : "Committee workspace"}</span></span>
+                    </Link>
                     <Link to="/" className="admin-sidebar-public-link" onClick={closeMenu} aria-label="View public website">
                         <span>Public site</span><span aria-hidden="true">↗</span>
                     </Link>
@@ -124,7 +160,12 @@ export default function AdminNav() {
                     <span>COUNCIL WORKSPACE</span>
                     <strong>{current.label}</strong>
                 </div>
-                <Link className="admin-topbar-public-link" to="/">View public site <span aria-hidden="true">↗</span></Link>
+                <div className="admin-topbar-actions">
+                    <Link className="admin-topbar-public-link" to="/">View public site <span aria-hidden="true">↗</span></Link>
+                    <button className="admin-topbar-logout" type="button" onClick={handleSignOut} disabled={signingOut}>
+                        {signingOut ? "Signing out…" : "Sign out"}
+                    </button>
+                </div>
             </header>
         </>
     );

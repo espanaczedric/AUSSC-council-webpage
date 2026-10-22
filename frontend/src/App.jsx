@@ -1,7 +1,10 @@
+import { useEffect, useState } from "react";
 import {
     BrowserRouter,
     Routes,
-    Route
+    Route,
+    Link,
+    useLocation
 } from "react-router-dom";
 
 // Public Pages
@@ -24,6 +27,7 @@ import RegisterAccount from "./pages/RegisterAccount";
 import ForgotPassword from "./pages/ForgotPassword";
 import CouncilProfile from "./pages/CouncilProfile";
 import CouncilGovernance from "./pages/CouncilGovernance";
+import WorkspaceAccessGuard from "./components/WorkspaceAccessGuard";
 
 // Admin Pages
 import AdminDashboard from "./pages/admin/AdminDashboard";
@@ -44,15 +48,30 @@ function NotFound() {
             <span>404 · PAGE NOT FOUND</span>
             <h1>We can’t find that page.</h1>
             <p>The link may be outdated, or the page may have moved.</p>
-            <a className="register-button" href="/">Back to home</a>
+            <Link className="register-button" to="/">Back to home</Link>
         </main>
     );
 }
 
-function App() {
+function AppRoutes() {
+    const location = useLocation();
+    const [logoutTransition, setLogoutTransition] = useState(false);
+
+    useEffect(() => {
+        const startLogout = () => setLogoutTransition(true);
+        const finishLogout = () => setLogoutTransition(false);
+        window.addEventListener("app-logout-start", startLogout);
+        window.addEventListener("app-logout-end", finishLogout);
+        return () => {
+            window.removeEventListener("app-logout-start", startLogout);
+            window.removeEventListener("app-logout-end", finishLogout);
+        };
+    }, []);
+
     return (
-        <BrowserRouter>
-            <Routes>
+        <>
+            <div className="app-route-transition" key={location.pathname}>
+            <Routes location={location}>
 
                 {/* =========================
                     PUBLIC PAGES
@@ -99,7 +118,7 @@ function App() {
                 />
 
                 <Route path="/profile" element={<CouncilProfile />} />
-                <Route path="/council" element={<CouncilGovernance />} />
+                <Route path="/council" element={<WorkspaceAccessGuard councilRoute><CouncilGovernance /></WorkspaceAccessGuard>} />
 
 
                 {/* =========================
@@ -128,57 +147,69 @@ function App() {
 
                 <Route
                     path="/admin"
-                    element={<AdminDashboard />}
+                    element={<WorkspaceAccessGuard><AdminDashboard /></WorkspaceAccessGuard>}
                 />
 
                 <Route
                     path="/admin/events"
-                    element={<AdminEvents />}
+                    element={<WorkspaceAccessGuard><AdminEvents /></WorkspaceAccessGuard>}
                 />
 
                 <Route
                     path="/admin/events/create"
-                    element={<CreateEvent />}
+                    element={<WorkspaceAccessGuard><CreateEvent /></WorkspaceAccessGuard>}
                 />
 
                 <Route
                     path="/admin/events/:id/edit"
-                    element={<EditEvent />}
+                    element={<WorkspaceAccessGuard><EditEvent /></WorkspaceAccessGuard>}
                 />
 
                 <Route
                     path="/admin/registrations"
-                    element={<Registrations />}
+                    element={<WorkspaceAccessGuard><Registrations /></WorkspaceAccessGuard>}
                 />
 
                 <Route
                     path="/admin/attendance"
-                    element={<Attendance />}
+                    element={<WorkspaceAccessGuard><Attendance /></WorkspaceAccessGuard>}
                 />
 
                 <Route
                     path="/admin/attendance/scanner"
-                    element={<QRScannerPage />}
+                    element={<WorkspaceAccessGuard><QRScannerPage /></WorkspaceAccessGuard>}
                 />
 
                 <Route
                     path="/admin/highlights"
-                    element={<EventHighlightsManager />}
+                    element={<WorkspaceAccessGuard><EventHighlightsManager /></WorkspaceAccessGuard>}
                 />
 
                 <Route
                     path="/admin/users"
-                    element={<Users />}
+                    element={<WorkspaceAccessGuard><Users /></WorkspaceAccessGuard>}
                 />
 
-                <Route path="/admin/committees/:committee" element={<CommitteeWorkspace />} />
-                <Route path="/admin/finance" element={<AdminFinance />} />
+                <Route path="/admin/committees/:committee" element={<WorkspaceAccessGuard committeeRoute><CommitteeWorkspace /></WorkspaceAccessGuard>} />
+                <Route path="/admin/finance" element={<WorkspaceAccessGuard><AdminFinance /></WorkspaceAccessGuard>} />
 
                 <Route path="*" element={<NotFound />} />
 
             </Routes>
-        </BrowserRouter>
+            </div>
+            <div className={`logout-transition-overlay${logoutTransition ? " is-active" : ""}`} aria-hidden={!logoutTransition}>
+                <div className="logout-transition-card" role="status" aria-live="polite">
+                    <span className="logout-transition-mark" aria-hidden="true">A</span>
+                    <strong>Signing you out</strong>
+                    <span className="logout-transition-track" aria-hidden="true"><i /></span>
+                </div>
+            </div>
+        </>
     );
+}
+
+function App() {
+    return <BrowserRouter><AppRoutes /></BrowserRouter>;
 }
 
 export default App;

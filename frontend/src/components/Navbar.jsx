@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 
-import { logoutUser } from "../services/api";
+import { getCurrentUser, getEventImageUrl, logoutWithAnimation } from "../services/api";
+import { committeeLabels, getCommitteeWorkspacePath, hasExecutiveAccess } from "../utils/workspaceAccess";
 
 
 /*
@@ -120,14 +121,32 @@ function Navbar() {
      * (login / logout from any tab or component)
      */
     useEffect(() => {
+        let active = true;
+
         function syncUser() {
-            setUser(getStoredUser());
+            const cachedUser = getStoredUser();
+            setUser(cachedUser);
+            if (!cachedUser) return;
+
+            getCurrentUser()
+                .then((data) => {
+                    if (!active || !data.user) return;
+                    localStorage.setItem("user", JSON.stringify(data.user));
+                    setUser(data.user);
+                })
+                .catch((error) => {
+                    if (!active || error.status !== 401) return;
+                    localStorage.removeItem("user");
+                    setUser(null);
+                });
         }
 
+        syncUser();
         window.addEventListener("auth-change", syncUser);
         window.addEventListener("storage", syncUser);
 
         return () => {
+            active = false;
             window.removeEventListener("auth-change", syncUser);
             window.removeEventListener("storage", syncUser);
         };
@@ -207,19 +226,13 @@ function Navbar() {
      */
     const handleLogout = useCallback(async () => {
         setLoggingOut(true);
-
-        try {
-            await logoutUser();
-        } catch (error) {
-            console.error("Logout failed:", error);
-            localStorage.removeItem("user");
-            window.dispatchEvent(new Event("auth-change"));
-        }
-
-        setLoggingOut(false);
         setDropdownOpen(false);
         setDetailsVisible(false);
+        setMenuOpen(false);
+        await logoutWithAnimation();
+        setLoggingOut(false);
         navigate("/");
+        window.dispatchEvent(new Event("app-logout-end"));
     }, [navigate]);
 
 
@@ -293,13 +306,13 @@ function Navbar() {
                 </div>
 
                 <div className="navbar-actions">
-                    {user?.role === "admin" ? (
+                    {hasExecutiveAccess(user) ? (
                         <NavLink className="navbar-workspace-link" to="/admin" onClick={() => setMenuOpen(false)}>
-                            Admin workspace
+                            Executive workspace
                         </NavLink>
                     ) : user ? (
-                        <NavLink className="navbar-workspace-link" to="/my-events" onClick={() => setMenuOpen(false)}>
-                            {user.council_position ? "Committee Assignment" : "My registrations"}
+                        <NavLink className="navbar-workspace-link" to={user.committee_assignment ? getCommitteeWorkspacePath(user) : "/my-events"} onClick={() => setMenuOpen(false)}>
+                            {user.committee_assignment ? `${committeeLabels[user.committee_assignment]?.replace(" Committee", "")} workspace` : user.council_position ? "Committee Assignment" : "My registrations"}
                         </NavLink>
                     ) : null}
 
@@ -316,7 +329,10 @@ function Navbar() {
                             aria-haspopup="true"
                             onClick={toggleDropdown}
                         >
-                            {user ? getUserInitials(user) : <AccountIcon />}
+                            {user ? <>
+                                <span className="navbar-avatar-initials">{getUserInitials(user)}</span>
+                                {user.profile_picture && <img className="navbar-avatar-photo" src={getEventImageUrl(user.profile_picture)} alt="" crossOrigin="use-credentials" onError={(event) => event.currentTarget.remove()} />}
+                            </> : <AccountIcon />}
                         </button>
 
 
@@ -343,7 +359,8 @@ function Navbar() {
                                     }}
                                 >
                                     <div className="navbar-dropdown-avatar">
-                                        {getUserInitials(user)}
+                                        <span className="navbar-dropdown-avatar-initials">{getUserInitials(user)}</span>
+                                        {user.profile_picture && <img className="navbar-dropdown-avatar-photo" src={getEventImageUrl(user.profile_picture)} alt="" crossOrigin="use-credentials" onError={(event) => event.currentTarget.remove()} />}
                                     </div>
                                     <div className="navbar-dropdown-name">
                                         <strong>

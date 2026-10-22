@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 
 import AdminNav from "../../components/AdminNav";
 import { deleteCommitteeWork, getCommitteeWork, reviewAdminEvent, reviewEventAssignment, saveCommitteeWork, updateCommitteeChecklist } from "../../services/api";
+import { hasExecutiveAccess } from "../../utils/workspaceAccess";
 
 const workspaces = {
     executive: { title: "Executive Committee", intro: "Council-wide progress, approvals, and event oversight.", kinds: ["approval", "task"], focus: ["Pending approvals", "Committee progress", "Recent activity"] },
@@ -24,6 +25,9 @@ function dateLabel(value) {
 export default function CommitteeWorkspace() {
     const { committee = "executive" } = useParams();
     const workspace = workspaces[committee] || workspaces.executive;
+    const canSwitchWorkspace = useMemo(() => {
+        try { return hasExecutiveAccess(JSON.parse(localStorage.getItem("user") || "null")); } catch { return false; }
+    }, []);
     const [data, setData] = useState({ items: [], events: [], users: [] });
     const [form, setForm] = useState(emptyForm);
     const [view, setView] = useState("board");
@@ -90,7 +94,7 @@ export default function CommitteeWorkspace() {
     ] : workspace.focus.map((label, index) => [label, index === 0 ? `${items.filter((item) => !["Complete", "Published", "Archived"].includes(item.status)).length} active items` : index === 1 ? `${overdue} overdue` : `${items.length} total records`]);
 
     return <><AdminNav /><main className="admin-page committee-workspace-page">
-        <header className="admin-header admin-page-heading"><div><span>COMMITTEE WORKSPACE</span><h1>{workspace.title}</h1><p>{workspace.intro}</p><nav className="committee-workspace-tabs" aria-label="Choose committee workspace">{Object.entries(workspaces).map(([key, item]) => <Link key={key} className={key === committee ? "is-active" : ""} to={`/admin/committees/${key}`}>{item.title.replace(" Committee", "")}</Link>)}</nav></div></header>
+        <header className="admin-header admin-page-heading"><div><span>COMMITTEE WORKSPACE</span><h1>{workspace.title}</h1><p>{workspace.intro}</p>{canSwitchWorkspace && <nav className="committee-workspace-tabs" aria-label="Choose committee workspace">{Object.entries(workspaces).map(([key, item]) => <Link key={key} className={key === committee ? "is-active" : ""} to={`/admin/committees/${key}`}>{item.title.replace(" Committee", "")}</Link>)}</nav>}</div></header>
         <section className="committee-focus-grid" aria-label="Workspace overview">
             {focusMetrics.map(([label, value], index) => <article key={label}><span>0{index + 1}</span><strong>{label}</strong><small>{value}</small></article>)}
         </section>

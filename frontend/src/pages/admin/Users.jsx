@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 
 import AdminNav from "../../components/AdminNav";
-import { getAdminUsers, saveCouncilAppointment } from "../../services/api";
+import { getAdminUsers, saveCommitteeAssignment, saveCouncilAppointment } from "../../services/api";
+import { hasExecutiveAppointment } from "../../utils/workspaceAccess";
 
 const appointmentOptions = [
     ["", "Not appointed"], ["governor", "Governor"], ["vice_governor", "Vice Governor"],
@@ -10,6 +11,13 @@ const appointmentOptions = [
     ["advisor", "Advisor"], ["co_advisor", "Co-Advisor"]
 ];
 const departments = ["CAS", "CMA", "CELA", "CIT", "COE", "CCJE", "CAHS"];
+const committeeOptions = [
+    ["", "No committee workspace"],
+    ["executive", "Executive Committee"],
+    ["publication", "Publication Committee"],
+    ["program", "Program Committee"],
+    ["production", "Production Committee"]
+];
 
 function Users() {
     const [users, setUsers] = useState([]);
@@ -19,7 +27,9 @@ function Users() {
     const [query, setQuery] = useState("");
     const [roleFilter, setRoleFilter] = useState("all");
     const [appointments, setAppointments] = useState({});
+    const [committeeAssignments, setCommitteeAssignments] = useState({});
     const [savingAppointment, setSavingAppointment] = useState("");
+    const [savingWorkspace, setSavingWorkspace] = useState("");
     const [notice, setNotice] = useState("");
 
     useEffect(() => {
@@ -27,6 +37,7 @@ function Users() {
             .then((data) => {
                 setUsers(data.users || []);
                 setAppointments(Object.fromEntries((data.users || []).map((user) => [user.id, { council_position: user.council_position || "", council_department: user.council_department || "" }])));
+                setCommitteeAssignments(Object.fromEntries((data.users || []).map((user) => [user.id, user.committee_assignment || ""])));
                 setStudentCount(Number(data.student_count) || 0);
             })
             .catch((requestError) => setError(requestError.message))
@@ -48,6 +59,17 @@ function Users() {
             setNotice(`Council appointment saved for ${user.first_name} ${user.last_name}.`);
         } catch (requestError) { setError(requestError.message || "Appointment could not be saved."); }
         finally { setSavingAppointment(""); }
+    }
+
+    async function saveWorkspace(user) {
+        const assignment = committeeAssignments[user.id] || "";
+        setSavingWorkspace(String(user.id)); setError(""); setNotice("");
+        try {
+            await saveCommitteeAssignment(user.id, assignment);
+            setUsers((current) => current.map((item) => item.id === user.id ? { ...item, committee_assignment: assignment || null } : item));
+            setNotice(`Workspace access saved for ${user.first_name} ${user.last_name}.`);
+        } catch (requestError) { setError(requestError.message || "Workspace access could not be saved."); }
+        finally { setSavingWorkspace(""); }
     }
 
     return (
@@ -99,6 +121,7 @@ function Users() {
                                     <th scope="col">Year</th>
                                     <th scope="col">Role</th>
                                     <th scope="col">Council appointment</th>
+                                    <th scope="col">Committee workspace</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -116,6 +139,18 @@ function Users() {
                                             </select>
                                             {appointments[user.id]?.council_position === "department_representative" && <select aria-label={`Department represented by ${user.first_name} ${user.last_name}`} value={appointments[user.id]?.council_department || "CAS"} onChange={(event) => setAppointments((current) => ({ ...current, [user.id]: { ...current[user.id], council_department: event.target.value } }))}>{departments.map((department) => <option key={department}>{department}</option>)}</select>}
                                             <button type="button" className="admin-secondary-action" disabled={savingAppointment === String(user.id)} onClick={() => saveAppointment(user)}>{savingAppointment === String(user.id) ? "Saving…" : "Save"}</button>
+                                        </td>
+                                        <td className="council-appointment-cell">
+                                            {hasExecutiveAppointment(user) ? (
+                                                <span className="admin-status is-admin">Executive access · from role</span>
+                                            ) : (
+                                                <>
+                                                    <select aria-label={`Committee workspace for ${user.first_name} ${user.last_name}`} value={committeeAssignments[user.id] || ""} onChange={(event) => setCommitteeAssignments((current) => ({ ...current, [user.id]: event.target.value }))}>
+                                                        {committeeOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                                                    </select>
+                                                    <button type="button" className="admin-secondary-action" disabled={savingWorkspace === String(user.id)} onClick={() => saveWorkspace(user)}>{savingWorkspace === String(user.id) ? "Saving…" : "Save access"}</button>
+                                                </>
+                                            )}
                                         </td>
                                     </tr>
                                 ))}

@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import AuthLayout from "../components/AuthLayout";
 import { apiRequest } from "../services/api";
+import { getCommitteeWorkspacePath, hasExecutiveAccess } from "../utils/workspaceAccess";
 
 function Login() {
     const navigate = useNavigate();
@@ -64,7 +65,8 @@ function Login() {
             localStorage.setItem("user", JSON.stringify(data.user));
             window.dispatchEvent(new Event("auth-change"));
 
-            if (data.user.role === "admin") navigate("/admin", { replace: true });
+            if (hasExecutiveAccess(data.user)) navigate("/admin", { replace: true });
+            else if (data.user.committee_assignment) navigate(getCommitteeWorkspacePath(data.user), { replace: true });
             else if (data.user.council_position) navigate("/my-events", { replace: true });
             else navigate("/", { replace: true });
         } catch (requestError) {

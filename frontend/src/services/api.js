@@ -69,6 +69,10 @@ export async function getPreviousEvents() {
     return apiRequest("/events/previous");
 }
 
+export async function getCommitteeDirectory() {
+    return apiRequest("/committees/directory");
+}
+
 export async function getEvent(id) {
     return apiRequest(`/events/event?id=${encodeURIComponent(id)}`);
 }
@@ -81,6 +85,10 @@ export async function getAdminEvents() {
     return apiRequest("/admin/events", {
         credentials: "include"
     });
+}
+
+export async function getAdminDashboard() {
+    return apiRequest("/admin/dashboard", { credentials: "include" });
 }
 
 export async function createAdminEvent(formData) {
@@ -133,6 +141,14 @@ export async function saveCouncilAppointment(userId, councilPosition, councilDep
         method: "POST",
         credentials: "include",
         body: JSON.stringify({ user_id: userId, council_position: councilPosition, council_department: councilDepartment })
+    });
+}
+
+export async function saveCommitteeAssignment(userId, committeeAssignment) {
+    return apiRequest("/admin/council/committee-assignment", {
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ user_id: userId, committee_assignment: committeeAssignment })
     });
 }
 
@@ -254,6 +270,23 @@ export async function logoutUser() {
     window.dispatchEvent(new Event("auth-change"));
 }
 
+export async function logoutWithAnimation() {
+    window.dispatchEvent(new Event("app-logout-start"));
+    const animationFinished = new Promise((resolve) => window.setTimeout(resolve, 460));
+    try {
+        await logoutUser();
+    } catch (error) {
+        console.error("Logout failed:", error);
+        localStorage.removeItem("user");
+        window.dispatchEvent(new Event("auth-change"));
+    }
+    await animationFinished;
+}
+
 export async function getCurrentUser() {
     return apiRequest("/auth/me", { credentials: "include" });
+}
+
+export async function updateMyProfile(profile) {
+    return apiRequest("/profile/update", { method: "POST", credentials: "include", body: profile });
 }

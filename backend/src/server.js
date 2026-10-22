@@ -31,6 +31,7 @@ let mongoClient = new MongoClient(mongoUri, mongoOptions);
 let db;
 let collections;
 let eventCovers;
+let profileMedia;
 let databaseReady = false;
 let databaseConnectionPromise;
 const passwordResetIpWindows = new Map();
@@ -133,6 +134,7 @@ app.use("/uploads", express.static(uploadRoot, { fallthrough: false, index: fals
 const text = (value) => value == null ? "" : String(value);
 const studentIdPattern = /^01-[0-9]{4}-[0-9]{6}$/;
 const councilPositions = new Set(["governor", "vice_governor", "secretary", "treasurer", "auditor", "social_media_manager", "department_representative", "advisor", "co_advisor"]);
+const executiveCouncilPositions = new Set(["governor", "vice_governor", "secretary", "treasurer", "auditor", "social_media_manager"]);
 const votingCouncilPositions = ["governor", "vice_governor", "secretary", "treasurer", "auditor", "social_media_manager", "department_representative"];
 const councilDepartments = new Set(["CAS", "CMA", "CELA", "CIT", "COE", "CCJE", "CAHS"]);
 const excuseCategories = new Set(["competition", "recognized_organization", "internship", "medical_emergency"]);
@@ -140,15 +142,70 @@ const councilCommittees = new Set(["executive", "publication", "program", "produ
 const registrationCode = () => `REG-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
 const ok = (res, message, extra = {}) => res.status(200).json(toApi({ success: true, ...(message ? { message } : {}), ...extra }));
 const fail = (res, status, message, extra = {}) => res.status(status).json({ success: false, message, ...extra });
-const adminOnly = (req, res, next) => req.session?.role === "admin" ? next() : fail(res, 401, "Administrator access is required.");
 const signedIn = (req, res, next) => req.session?.userId ? next() : fail(res, 401, "You must be signed in to continue.");
+
+function hasExecutiveAccess(user) {
+    return user?.role === "admin" || user?.committee_assignment === "executive" || executiveCouncilPositions.has(user?.council_position);
+}
+
+async function getSessionUser(req) {
+    if (!req.session?.userId) return null;
+    return collections.users.findOne({ id: Number(req.session.userId) }, {
+        projection: { id: 1, role: 1, council_position: 1, council_department: 1, committee_assignment: 1 }
+    });
+}
+
+async function executiveAccess(req, res, next) {
+    if (!req.session?.userId) return fail(res, 401, "You must be signed in to continue.");
+    try {
+        const user = await getSessionUser(req);
+        if (!user || !hasExecutiveAccess(user)) return fail(res, 403, "Executive committee or administrator access is required.");
+        req.councilUser = user;
+        next();
+    } catch (error) { next(error); }
+}
+
+const adminOnly = executiveAccess;
+
+async function committeeWorkspaceAccess(req, res, next) {
+    if (!req.session?.userId) return fail(res, 401, "You must be signed in to continue.");
+    try {
+        const user = await getSessionUser(req);
+        if (!user) return fail(res, 403, "A current committee assignment is required.");
+        req.councilUser = user;
+        if (hasExecutiveAccess(user)) return next();
+
+        const assignedCommittee = user.committee_assignment;
+        if (!councilCommittees.has(assignedCommittee) || assignedCommittee === "executive") {
+            return fail(res, 403, "A current committee assignment is required.");
+        }
+        req.workspaceCommittee = assignedCommittee;
+
+        const requestedCommittee = text(req.query.committee || req.body?.committee).trim().toLowerCase();
+        if (requestedCommittee && requestedCommittee !== assignedCommittee) {
+            return fail(res, 403, "You can only access your assigned committee workspace.");
+        }
+
+        const itemId = Number(req.body?.id || req.body?.item_id || 0);
+        if (itemId) {
+            const item = await collections.committeeWorkItems.findOne({ id: itemId }, { projection: { committee: 1 } });
+            if (!item || item.committee !== assignedCommittee) {
+                return fail(res, 403, "You can only manage items in your assigned committee workspace.");
+            }
+        }
+        next();
+    } catch (error) { next(error); }
+}
 
 function councilAccess(positions = [], allowAdmin = true) {
     return async (req, res, next) => {
         if (!req.session?.userId) return fail(res, 401, "You must be signed in to continue.");
         try {
-            const user = await collections.users.findOne({ id: Number(req.session.userId) }, { projection: { id: 1, role: 1, council_position: 1, council_department: 1 } });
-            if (allowAdmin && req.session.role === "admin") { req.councilUser = user; return next(); }
+            const user = await getSessionUser(req);
+            if (allowAdmin && hasExecutiveAccess(user)) { req.councilUser = user; return next(); }
+            if (user?.committee_assignment && user.committee_assignment !== "executive") {
+                return fail(res, 403, "Your account is limited to its assigned committee workspace.");
+            }
             if (!user || !councilPositions.has(user.council_position)) return fail(res, 403, "A current A.U.S.S.C. council appointment is required.");
             if (positions.length && !positions.includes(user.council_position)) return fail(res, 403, "Your council appointment does not have permission for this action.");
             req.councilUser = user;
@@ -487,6 +544,90 @@ app.get("/api/auth/me", signedIn, async (req, res, next) => {
     } catch (error) { return next(error); }
 });
 
+app.get("/api/profile/media/:fileId", signedIn, async (req, res, next) => {
+    if (!/^[a-f0-9]{24}$/i.test(req.params.fileId)) return fail(res, 404, "Profile image not found.");
+    try {
+        const fileId = new ObjectId(req.params.fileId);
+        const file = await db.collection("profile_media.files").findOne({ _id: fileId, "metadata.owner_user_id": Number(req.session.userId) });
+        if (!file || !["image/jpeg", "image/png", "image/webp"].includes(file.contentType)) return fail(res, 404, "Profile image not found.");
+        res.setHeader("Content-Type", file.contentType);
+        res.setHeader("Cache-Control", "private, no-store");
+        const download = profileMedia.openDownloadStream(fileId);
+        download.on("error", next);
+        download.pipe(res);
+    } catch (error) { next(error); }
+});
+
+app.get("/api/committees/directory", async (_req, res, next) => {
+    try {
+        const memberQuery = {
+            $or: [
+                { committee_assignment: { $in: [...councilCommittees] } },
+                { council_position: { $in: [...executiveCouncilPositions] } }
+            ]
+        };
+        const users = await collections.users.find(memberQuery, {
+            projection: {
+                _id: 0, first_name: 1, last_name: 1, committee_assignment: 1,
+                council_position: 1, council_department: 1, profile_picture: 1, cover_photo: 1
+            }
+        }).sort({ last_name: 1, first_name: 1 }).toArray();
+        const committees = Object.fromEntries([...councilCommittees].map((committee) => [committee, []]));
+        const publicMediaUrl = (url) => {
+            const match = /^\/api\/profile\/media\/([a-f0-9]{24})$/i.exec(url || "");
+            return match ? `/api/committees/media/${match[1]}` : "";
+        };
+
+        for (const user of users) {
+            const member = {
+                first_name: user.first_name || "",
+                last_name: user.last_name || "",
+                council_position: user.council_position || "",
+                council_department: user.council_department || "",
+                profile_picture: publicMediaUrl(user.profile_picture),
+                cover_photo: publicMediaUrl(user.cover_photo)
+            };
+            if (executiveCouncilPositions.has(user.council_position) || user.committee_assignment === "executive") {
+                committees.executive.push(member);
+            }
+            if (user.committee_assignment && user.committee_assignment !== "executive" && committees[user.committee_assignment]) {
+                committees[user.committee_assignment].push(member);
+            }
+        }
+        return ok(res, null, { committees });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/committees/media/:fileId", async (req, res, next) => {
+    if (!/^[a-f0-9]{24}$/i.test(req.params.fileId)) return fail(res, 404, "Committee profile image not found.");
+    try {
+        const fileId = new ObjectId(req.params.fileId);
+        const file = await db.collection("profile_media.files").findOne({ _id: fileId });
+        const ownerId = Number(file?.metadata?.owner_user_id);
+        const imageField = file?.metadata?.kind === "profile" ? "profile_picture" : file?.metadata?.kind === "cover" ? "cover_photo" : "";
+        if (!file || !imageField || !["image/jpeg", "image/png", "image/webp"].includes(file.contentType)) {
+            return fail(res, 404, "Committee profile image not found.");
+        }
+        const memberQuery = {
+            id: ownerId,
+            [imageField]: `/api/profile/media/${fileId.toHexString()}`,
+            $or: [
+                { committee_assignment: { $in: [...councilCommittees] } },
+                { council_position: { $in: [...executiveCouncilPositions] } }
+            ]
+        };
+        if (!await collections.users.findOne(memberQuery, { projection: { id: 1 } })) {
+            return fail(res, 404, "Committee profile image not found.");
+        }
+        res.setHeader("Content-Type", file.contentType);
+        res.setHeader("Cache-Control", "public, max-age=300");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        const download = profileMedia.openDownloadStream(fileId);
+        download.on("error", next);
+        download.pipe(res);
+    } catch (error) { return next(error); }
+});
+
 // Public event discovery
 app.get("/api/events/list", async (_req, res, next) => {
     try {
@@ -669,7 +810,7 @@ app.get("/api/registration/by-code", signedIn, async (req, res, next) => {
 });
 
 // Admin event and account management
-app.get("/api/admin/events", councilAccess([...councilPositions]), async (_req, res, next) => {
+app.get("/api/admin/events", adminOnly, async (_req, res, next) => {
     try {
         const [events, eventCount, activeEventCount, registrationCount, studentCount] = await Promise.all([
             collections.events.find({}).sort({ start_date: -1 }).toArray(),
@@ -690,7 +831,7 @@ app.get("/api/admin/events", councilAccess([...councilPositions]), async (_req, 
     } catch (error) { return next(error); }
 });
 
-app.get("/api/admin/registrations", councilAccess([...councilPositions]), async (_req, res, next) => {
+app.get("/api/admin/registrations", adminOnly, async (_req, res, next) => {
     try {
         const docs = await collections.registrations.find({}).sort({ registered_at: -1 }).limit(200).toArray();
         const userIds = [...new Set(docs.map((doc) => doc.user_id))];
@@ -758,6 +899,40 @@ app.post("/api/admin/council/roster", adminOnly, async (req, res, next) => {
             await collections.users.updateOne({ id: userId }, update);
         }
         return ok(res, position ? "Council appointment saved." : "Council appointment removed.");
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/council/committee-assignment", adminOnly, async (req, res, next) => {
+    const userId = Number(req.body.user_id);
+    const committee = text(req.body.committee_assignment).trim().toLowerCase();
+    if (!Number.isInteger(userId) || userId < 1 || (committee && !councilCommittees.has(committee))) {
+        return fail(res, 422, "Choose a valid account and committee workspace.");
+    }
+    try {
+        const user = await collections.users.findOne({ id: userId }, {
+            projection: { id: 1, role: 1, council_position: 1 }
+        });
+        if (!user) return fail(res, 404, "Account not found.");
+
+        if (committee) {
+            await collections.users.updateOne({ id: userId }, { $set: {
+                committee_assignment: committee,
+                committee_assigned_at: new Date(),
+                committee_assigned_by: Number(req.session.userId)
+            } });
+        } else {
+            await collections.users.updateOne({ id: userId }, { $unset: {
+                committee_assignment: "",
+                committee_assigned_at: "",
+                committee_assigned_by: ""
+            } });
+        }
+        return ok(res, committee ? "Committee workspace access saved." : "Committee workspace access removed.", {
+            committee_assignment: committee || null,
+            effective_committee_assignment: user.role === "admin" || executiveCouncilPositions.has(user.council_position)
+                ? "executive"
+                : committee || null
+        });
     } catch (error) { return next(error); }
 });
 
@@ -1037,21 +1212,201 @@ app.post("/api/council/attendance/checkin", councilAccess(["governor", "vice_gov
 // Shared committee work items provide one source of truth for publication, production and program workflows.
 const workStatuses = new Set(["Request Submitted", "Requirements Review", "Assigned", "In Design", "Internal Review", "Revisions Requested", "Awaiting Approval", "Approved", "Scheduled", "Published", "Archived", "Not Started", "In Progress", "Blocked", "Complete"]);
 const workCommittees = new Set(["executive", "publication", "production", "program"]);
-app.get("/api/admin/committee-work", councilAccess([...councilPositions]), async (req, res, next) => {
-    const committee = text(req.query.committee).trim().toLowerCase();
+
+app.get("/api/admin/dashboard", adminOnly, async (_req, res, next) => {
+    try {
+        const now = new Date();
+        const period = periodForDate(now);
+        const manilaMonth = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit" }).formatToParts(now).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+        const trendStart = new Date(Date.UTC(Number(manilaMonth.year), Number(manilaMonth.month) - 6, 1) - 8 * 60 * 60 * 1000);
+        const [
+            studentCount,
+            studentCourseRows,
+            studentRegistrationRows,
+            totalEventCount,
+            activeEventCount,
+            publicationRows,
+            eventRows,
+            eventRegistrationRows,
+            councilMetricsRows,
+            meetings,
+            reports,
+            pendingAssignmentCount,
+            pendingApprovalWorkCount,
+            financeRows
+        ] = await Promise.all([
+            collections.users.countDocuments({ role: "student" }),
+            collections.users.aggregate([
+                { $match: { role: "student", course: { $type: "string", $ne: "" } } },
+                { $group: { _id: "$course", count: { $sum: 1 } } },
+                { $sort: { count: -1, _id: 1 } },
+                { $limit: 6 }
+            ]).toArray(),
+            collections.registrations.aggregate([
+                { $lookup: { from: "users", localField: "user_id", foreignField: "id", as: "account" } },
+                { $unwind: "$account" },
+                { $match: { "account.role": "student", status: { $ne: "cancelled" } } },
+                { $facet: {
+                    summary: [{ $group: { _id: null, registrations: { $sum: 1 }, checked_in: { $sum: { $cond: [{ $eq: ["$status", "attended"] }, 1, 0] } } } }],
+                    trend: [
+                        { $match: { registered_at: { $gte: trendStart } } },
+                        { $group: { _id: { $dateToString: { format: "%Y-%m", date: "$registered_at", timezone: "Asia/Manila" } }, registrations: { $sum: 1 }, checked_in: { $sum: { $cond: [{ $eq: ["$status", "attended"] }, 1, 0] } } } },
+                        { $sort: { _id: 1 } }
+                    ]
+                } }
+            ]).toArray(),
+            collections.events.countDocuments({}),
+            collections.events.countDocuments({ status: { $in: ["upcoming", "ongoing"] }, $or: [{ publication_status: "published" }, { publication_status: { $exists: false } }] }),
+            collections.events.aggregate([{ $group: { _id: { $ifNull: ["$publication_status", "published"] }, count: { $sum: 1 } } }]).toArray(),
+            collections.events.find({ status: { $in: ["upcoming", "ongoing"] }, $or: [{ publication_status: "published" }, { publication_status: { $exists: false } }] }, { projection: { id: 1, title: 1, start_date: 1, end_date: 1, location: 1, cover_image: 1, capacity: 1, status: 1, publication_status: 1 } }).sort({ start_date: 1 }).limit(4).toArray(),
+            collections.registrations.aggregate([{ $match: { status: { $ne: "cancelled" } } }, { $group: { _id: "$event_id", count: { $sum: 1 } } }]).toArray(),
+            collections.users.aggregate([{ $facet: {
+                roster: [{ $match: { council_position: { $in: [...councilPositions] } } }, { $count: "count" }],
+                voting: [{ $match: { council_position: { $in: votingCouncilPositions } } }, { $count: "count" }],
+                executive: [{ $match: { $or: [{ committee_assignment: "executive" }, { council_position: { $in: [...executiveCouncilPositions] } }] } }, { $count: "count" }],
+                committees: [{ $match: { committee_assignment: { $in: [...workCommittees] } } }, { $group: { _id: "$committee_assignment", count: { $sum: 1 } } }]
+            } }]).toArray(),
+            collections.governanceMeetings.find({ academic_period: period }, { projection: { id: 1, title: 1, meeting_type: 1, mandatory: 1, status: 1, start_at: 1, end_at: 1, quorum_waiver_rationale: 1, minutes_status: 1 } }).sort({ start_at: 1 }).toArray(),
+            collections.councilReports.find({ academic_period: period }, { projection: { committee: 1, status: 1 } }).toArray(),
+            collections.eventAssignments.countDocuments({ status: "pending" }),
+            collections.committeeWorkItems.countDocuments({ committee: "executive", kind: "approval", status: { $nin: ["Approved", "Complete", "Archived"] } }),
+            collections.financialRecords.find({ $or: [{ type: "allocation", status: { $in: ["proposed", "approved"] } }, { type: "expense", status: { $in: ["pending", "recorded"] } }] }, { projection: { type: 1, status: 1, amount: 1 } }).toArray()
+        ]);
+
+        const studentRegistrationStats = studentRegistrationRows[0] || { summary: [], trend: [] };
+        const studentSummary = studentRegistrationStats.summary[0] || { registrations: 0, checked_in: 0 };
+        const studentRegistrations = Number(studentSummary.registrations || 0);
+        const studentCheckIns = Number(studentSummary.checked_in || 0);
+        const publication = Object.fromEntries(publicationRows.map(({ _id, count }) => [_id, count]));
+        const eventRegistrationCount = new Map(eventRegistrationRows.map(({ _id, count }) => [_id, count]));
+        const councilMetrics = councilMetricsRows[0] || {};
+        const votingMemberCount = councilMetrics.voting?.[0]?.count || 0;
+        const quorumThreshold = votingMemberCount ? Math.ceil(votingMemberCount * 2 / 3) : 0;
+        const meetingIds = meetings.map((meeting) => meeting.id);
+        const [councilAttendance, currentPeriodExcuses] = meetingIds.length ? await Promise.all([
+            collections.councilAttendance.find({ meeting_id: { $in: meetingIds } }, { projection: { meeting_id: 1, user_id: 1 } }).toArray(),
+            collections.councilExcuses.find({ meeting_id: { $in: meetingIds }, status: { $in: ["pending", "approved"] } }, { projection: { id: 1, meeting_id: 1, user_id: 1, status: 1 } }).toArray()
+        ]) : [[], []];
+        const attendanceByMeeting = new Map();
+        for (const record of councilAttendance) {
+            const present = attendanceByMeeting.get(record.meeting_id) || new Set();
+            present.add(record.user_id);
+            attendanceByMeeting.set(record.meeting_id, present);
+        }
+        const approvedExcusesByMeeting = new Map();
+        for (const excuse of currentPeriodExcuses.filter((record) => record.status === "approved")) {
+            const excused = approvedExcusesByMeeting.get(excuse.meeting_id) || new Set();
+            excused.add(excuse.user_id);
+            approvedExcusesByMeeting.set(excuse.meeting_id, excused);
+        }
+        const completedMandatoryMeetings = meetings.filter((meeting) => meeting.mandatory && meeting.status !== "cancelled" && new Date(meeting.end_at) <= now);
+        const meetingChart = completedMandatoryMeetings.slice(-6).map((meeting) => {
+            const present = attendanceByMeeting.get(meeting.id)?.size || 0;
+            const waived = Boolean(meeting.quorum_waiver_rationale);
+            return { id: meeting.id, title: meeting.title, start_at: meeting.start_at, present, voting_members: votingMemberCount, quorum_required: quorumThreshold, quorum_met: votingMemberCount > 0 && present >= quorumThreshold, quorum_waived: waived };
+        });
+        let totalMeetingAttendance = 0;
+        let possibleMeetingAttendance = 0;
+        for (const meeting of completedMandatoryMeetings) {
+            const approvedExcuses = approvedExcusesByMeeting.get(meeting.id) || new Set();
+            const present = attendanceByMeeting.get(meeting.id) || new Set();
+            possibleMeetingAttendance += Math.max(0, votingMemberCount - approvedExcuses.size);
+            totalMeetingAttendance += [...present].filter((userId) => !approvedExcuses.has(userId)).length;
+        }
+        const reportStatusCount = reports.reduce((result, report) => {
+            result[report.status] = (result[report.status] || 0) + 1;
+            result.by_committee[report.committee] = (result.by_committee[report.committee] || 0) + 1;
+            return result;
+        }, { by_committee: Object.fromEntries([...workCommittees].map((committee) => [committee, 0])) });
+        const finance = financeRows.reduce((summary, record) => {
+            const amount = Number(record.amount) || 0;
+            if (record.type === "allocation" && record.status === "approved") summary.approved_allocations += amount;
+            if (record.type === "allocation" && record.status === "proposed") summary.proposed_allocations += amount;
+            if (record.type === "expense" && record.status === "recorded") summary.recorded_expenses += amount;
+            if (record.type === "expense" && record.status === "pending") summary.pending_expenses += amount;
+            return summary;
+        }, { approved_allocations: 0, proposed_allocations: 0, recorded_expenses: 0, pending_expenses: 0 });
+        const publicationPending = Number(publication.pending_approval || 0);
+        const reportsPending = Number(reportStatusCount.submitted || 0);
+        const minutesPending = meetings.filter((meeting) => meeting.minutes_status === "pending_advisor").length;
+        const pendingExcuseReviews = currentPeriodExcuses.filter((excuse) => excuse.status === "pending").length;
+        const pendingApprovals = publicationPending + reportsPending + minutesPending + pendingExcuseReviews + pendingAssignmentCount + pendingApprovalWorkCount;
+
+        return ok(res, null, {
+            dashboard: {
+                academic_period: period,
+                students: {
+                    account_count: studentCount,
+                    registration_count: studentRegistrations,
+                    check_in_count: studentCheckIns,
+                    check_in_rate: studentRegistrations ? Math.round(studentCheckIns / studentRegistrations * 100) : 0,
+                    course_distribution: studentCourseRows.map((row) => ({ course: row._id, count: row.count })),
+                    registration_trend: studentRegistrationStats.trend.map((month) => ({ month: month._id, registrations: month.registrations, checked_in: month.checked_in }))
+                },
+                events: {
+                    total: totalEventCount,
+                    upcoming_or_live: activeEventCount,
+                    pending_approval: publicationPending,
+                    publication_status: { draft: publication.draft || 0, pending_approval: publicationPending, published: publication.published || 0, cancelled: publication.cancelled || 0, archived: publication.archived || 0 }
+                },
+                council: {
+                    roster_count: councilMetrics.roster?.[0]?.count || 0,
+                    voting_member_count: votingMemberCount,
+                    committee_distribution: [
+                        { committee: "executive", count: councilMetrics.executive?.[0]?.count || 0 },
+                        ...["publication", "program", "production"].map((committee) => ({ committee, count: councilMetrics.committees?.find((row) => row._id === committee)?.count || 0 }))
+                    ],
+                    academic_period: period,
+                    meeting_count: meetings.length,
+                    completed_mandatory_meeting_count: completedMandatoryMeetings.length,
+                    mean_meeting_attendance: possibleMeetingAttendance ? Math.round(totalMeetingAttendance / possibleMeetingAttendance * 100) : null,
+                    quorum_threshold: quorumThreshold,
+                    quorum_met_count: meetingChart.filter((meeting) => meeting.quorum_met || meeting.quorum_waived).length,
+                    meeting_chart: meetingChart,
+                    report_count: reports.length,
+                    reports_pending: reportsPending,
+                    reports_by_committee: reportStatusCount.by_committee,
+                    minutes_pending_review: minutesPending,
+                    excuses_pending_review: pendingExcuseReviews,
+                    event_assignments_pending: pendingAssignmentCount,
+                    approval_queue_count: pendingApprovals,
+                    finance: { ...finance, available_balance: finance.approved_allocations - finance.recorded_expenses }
+                }
+            },
+            events: eventRows.map((event) => ({ ...withEventStatus(event), registration_count: eventRegistrationCount.get(event.id) || 0 }))
+        });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/admin/committee-work", committeeWorkspaceAccess, async (req, res, next) => {
+    const committee = req.workspaceCommittee || text(req.query.committee).trim().toLowerCase();
     if (committee && !workCommittees.has(committee)) return fail(res, 422, "Choose a valid committee workspace.");
     try {
+        const isExecutive = !req.workspaceCommittee;
         const query = committee && committee !== "executive" ? { committee } : {};
+        const visibleEventsQuery = isExecutive
+            ? {}
+            : { status: { $ne: "cancelled" }, $or: [{ publication_status: "published" }, { publication_status: { $exists: false } }] };
+        const usersQuery = isExecutive
+            ? { $or: [
+                { committee_assignment: committee || "executive" },
+                { committee_assignment: "executive" },
+                { role: "admin" },
+                { council_position: { $in: [...executiveCouncilPositions] } }
+            ] }
+            : { committee_assignment: req.workspaceCommittee };
         const [items, events, users, eventCount, activeEventCount, registrationCount, attendanceCount, workApprovalCount, assignmentQueue, pendingEvents, financeRecords] = await Promise.all([
             collections.committeeWorkItems.find(query).sort({ due_at: 1, updated_at: -1 }).toArray(),
-            collections.events.find({}, { projection: { id: 1, title: 1, start_date: 1, status: 1 } }).sort({ start_date: -1 }).toArray(),
-            collections.users.find({}, { projection: { id: 1, first_name: 1, last_name: 1, email: 1, role: 1 } }).sort({ first_name: 1 }).toArray(),
-            collections.events.countDocuments({}), collections.events.countDocuments({ status: { $in: ["upcoming", "ongoing"] } }),
-            collections.registrations.countDocuments({ status: { $ne: "cancelled" } }), collections.attendance.countDocuments({}),
-            collections.committeeWorkItems.countDocuments({ committee: "executive", kind: "approval", status: { $nin: ["Approved", "Complete", "Archived"] } }),
-            committee === "executive" ? collections.eventAssignments.find({ status: "pending" }).sort({ created_at: 1 }).toArray() : Promise.resolve([]),
-            committee === "executive" ? collections.events.find({ publication_status: "pending_approval" }, { projection: { id: 1, title: 1, description: 1, start_date: 1, end_date: 1, location: 1, cover_image: 1 } }).sort({ start_date: 1 }).toArray() : Promise.resolve([]),
-            committee === "executive" ? collections.financialRecords.find({ $or: [{ type: "allocation", status: "approved" }, { type: "expense", status: "recorded" }] }, { projection: { type: 1, amount: 1 } }).toArray() : Promise.resolve([])
+            collections.events.find(visibleEventsQuery, { projection: { id: 1, title: 1, start_date: 1, status: 1 } }).sort({ start_date: -1 }).toArray(),
+            collections.users.find(usersQuery, { projection: { id: 1, first_name: 1, last_name: 1, email: 1, role: 1 } }).sort({ first_name: 1 }).toArray(),
+            isExecutive ? collections.events.countDocuments({}) : Promise.resolve(0),
+            isExecutive ? collections.events.countDocuments({ status: { $in: ["upcoming", "ongoing"] } }) : Promise.resolve(0),
+            isExecutive ? collections.registrations.countDocuments({ status: { $ne: "cancelled" } }) : Promise.resolve(0),
+            isExecutive ? collections.attendance.countDocuments({}) : Promise.resolve(0),
+            isExecutive ? collections.committeeWorkItems.countDocuments({ committee: "executive", kind: "approval", status: { $nin: ["Approved", "Complete", "Archived"] } }) : Promise.resolve(0),
+            isExecutive && committee === "executive" ? collections.eventAssignments.find({ status: "pending" }).sort({ created_at: 1 }).toArray() : Promise.resolve([]),
+            isExecutive && committee === "executive" ? collections.events.find({ publication_status: "pending_approval" }, { projection: { id: 1, title: 1, description: 1, start_date: 1, end_date: 1, location: 1, cover_image: 1 } }).sort({ start_date: 1 }).toArray() : Promise.resolve([]),
+            isExecutive && committee === "executive" ? collections.financialRecords.find({ $or: [{ type: "allocation", status: "approved" }, { type: "expense", status: "recorded" }] }, { projection: { type: 1, amount: 1 } }).toArray() : Promise.resolve([])
         ]);
         const eventMap = new Map(events.map((event) => [event.id, event.title]));
         const userMap = new Map(users.map((user) => [user.id, `${user.first_name} ${user.last_name}`.trim()]));
@@ -1066,13 +1421,13 @@ app.get("/api/admin/committee-work", councilAccess([...councilPositions]), async
             const assignmentUserMap = new Map(assignmentUsers.map((item) => [item.id, item]));
             assignmentQueueRows = assignmentQueue.map((item) => ({ ...item, event: assignmentEventMap.get(item.event_id), member: assignmentUserMap.get(item.user_id) })).filter((item) => item.event && item.member);
         }
-        return ok(res, null, { items: items.map((item) => ({ ...item, event_title: eventMap.get(item.event_id) || "—", assignee_name: userMap.get(item.assignee_user_id) || "Unassigned" })), events, users, assignment_queue: assignmentQueueRows, event_queue: pendingEvents, overview: { event_count: eventCount, active_event_count: activeEventCount, registration_count: registrationCount, attendance_count: attendanceCount, pending_approval_count: workApprovalCount + assignmentQueueRows.length + pendingEvents.length, approved_allocation_total: financeSummary.allocated, recorded_expense_total: financeSummary.expenses } });
+        return ok(res, null, { items: items.map((item) => ({ ...item, event_title: eventMap.get(item.event_id) || "—", assignee_name: userMap.get(item.assignee_user_id) || "Unassigned" })), events, users, assignment_queue: assignmentQueueRows, event_queue: pendingEvents, overview: isExecutive ? { event_count: eventCount, active_event_count: activeEventCount, registration_count: registrationCount, attendance_count: attendanceCount, pending_approval_count: workApprovalCount + assignmentQueueRows.length + pendingEvents.length, approved_allocation_total: financeSummary.allocated, recorded_expense_total: financeSummary.expenses } : null });
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/committee-work/save", councilAccess([...councilPositions]), async (req, res, next) => {
+app.post("/api/admin/committee-work/save", committeeWorkspaceAccess, async (req, res, next) => {
     const id = Number(req.body.id || 0);
-    const committee = text(req.body.committee).trim().toLowerCase();
+    const committee = req.workspaceCommittee || text(req.body.committee).trim().toLowerCase();
     const kind = text(req.body.kind).trim().toLowerCase();
     const title = text(req.body.title).trim();
     const details = text(req.body.details).trim();
@@ -1086,7 +1441,8 @@ app.post("/api/admin/committee-work/save", councilAccess([...councilPositions]),
     const duration = req.body.duration_minutes ? Number(req.body.duration_minutes) : null;
     const checklistLabels = text(req.body.checklist_text).split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 40);
     const validKinds = new Set(["pubmat", "program", "production", "approval", "task"]);
-    if (!workCommittees.has(committee) || !validKinds.has(kind) || !title || title.length > 180 || details.length > 4000 || !workStatuses.has(status) || !["low", "normal", "high", "urgent"].includes(priority)) return fail(res, 422, "Review the work item fields and status.");
+    const kindsByCommittee = { executive: ["approval", "task"], publication: ["pubmat", "task"], program: ["program", "task"], production: ["production", "task"] };
+    if (!workCommittees.has(committee) || !validKinds.has(kind) || !kindsByCommittee[committee]?.includes(kind) || !title || title.length > 180 || details.length > 4000 || !workStatuses.has(status) || !["low", "normal", "high", "urgent"].includes(priority)) return fail(res, 422, "Review the work item fields and status.");
     if (req.body.due_at && !dueAt) return fail(res, 422, "Enter a valid deadline.");
     if (timeSlot && !/^([01]\d|2[0-3]):[0-5]\d$/.test(timeSlot)) return fail(res, 422, "Enter a valid local start time.");
     if (duration !== null && (!Number.isInteger(duration) || duration < 1 || duration > 1440)) return fail(res, 422, "Duration must be between 1 and 1,440 minutes.");
@@ -1096,7 +1452,19 @@ app.post("/api/admin/committee-work/save", councilAccess([...councilPositions]),
     try {
         const now = new Date();
         if (eventId && !await collections.events.findOne({ id: eventId }, { projection: { id: 1 } })) return fail(res, 404, "Event not found.");
-        if (assigneeId && !await collections.users.findOne({ id: assigneeId }, { projection: { id: 1 } })) return fail(res, 404, "Assignee not found.");
+        if (assigneeId) {
+            const assigneeQuery = req.workspaceCommittee
+                ? { id: assigneeId, committee_assignment: req.workspaceCommittee }
+                : { id: assigneeId, $or: [
+                    { committee_assignment: committee },
+                    { committee_assignment: "executive" },
+                    { role: "admin" },
+                    { council_position: { $in: [...executiveCouncilPositions] } }
+                ] };
+            if (!await collections.users.findOne(assigneeQuery, { projection: { id: 1 } })) {
+                return fail(res, 422, req.workspaceCommittee ? "You can assign work only to members of your committee." : "Assignee must belong to this committee or the Executive Committee.");
+            }
+        }
         if (!id && ((kind === "pubmat" && status !== "Request Submitted") || (kind !== "pubmat" && !["Not Started", "Request Submitted"].includes(status)))) return fail(res, 422, "New items must start at the first step in their workflow.");
         if (id) {
             const existing = await collections.committeeWorkItems.findOne({ id });
@@ -1123,7 +1491,7 @@ app.post("/api/admin/committee-work/save", councilAccess([...councilPositions]),
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/committee-work/delete", councilAccess([...councilPositions]), async (req, res, next) => {
+app.post("/api/admin/committee-work/delete", committeeWorkspaceAccess, async (req, res, next) => {
     const id = Number(req.body.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 422, "Choose a valid work item.");
     try {
@@ -1133,7 +1501,7 @@ app.post("/api/admin/committee-work/delete", councilAccess([...councilPositions]
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/committee-work/checklist", councilAccess([...councilPositions]), async (req, res, next) => {
+app.post("/api/admin/committee-work/checklist", committeeWorkspaceAccess, async (req, res, next) => {
     const id = Number(req.body.id);
     const label = text(req.body.label).trim();
     if (!Number.isInteger(id) || id < 1 || !label || label.length > 180 || typeof req.body.done !== "boolean") return fail(res, 422, "Choose a checklist item and completion status.");
@@ -1144,7 +1512,7 @@ app.post("/api/admin/committee-work/checklist", councilAccess([...councilPositio
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/participation/review", councilAccess(["governor", "vice_governor", "secretary"]), async (req, res, next) => {
+app.post("/api/admin/participation/review", adminOnly, async (req, res, next) => {
     const id = Number(req.body.id);
     const status = text(req.body.status).trim();
     if (!Number.isInteger(id) || id < 1 || !["approved", "rejected"].includes(status)) return fail(res, 422, "Choose a valid assignment decision.");
@@ -1169,13 +1537,13 @@ app.get("/api/transparency/reports", async (_req, res, next) => {
     } catch (error) { return next(error); }
 });
 
-app.get("/api/admin/finance", councilAccess(["governor", "treasurer", "auditor"]), async (_req, res, next) => {
+app.get("/api/admin/finance", adminOnly, async (_req, res, next) => {
     try {
         return ok(res, null, { records: await collections.financialRecords.find({}).sort({ period: -1, created_at: -1 }).toArray() });
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/finance/save", councilAccess(["governor", "treasurer", "auditor"]), async (req, res, next) => {
+app.post("/api/admin/finance/save", adminOnly, async (req, res, next) => {
     const id = Number(req.body.id || 0);
     const type = text(req.body.type).trim();
     const title = text(req.body.title).trim();
@@ -1211,6 +1579,110 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 *
 const imageMiddleware = (req, res, next) => upload.single("cover_image")(req, res, (error) => {
     if (error) return fail(res, 422, "Choose an image smaller than 4 MB.");
     next();
+});
+
+const profileUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 2 } });
+const profileImageMiddleware = (req, res, next) => profileUpload.fields([
+    { name: "profile_picture", maxCount: 1 },
+    { name: "cover_photo", maxCount: 1 }
+])(req, res, (error) => {
+    if (error) return fail(res, 422, "Choose JPG, PNG, or WebP photos under 5 MB each.");
+    next();
+});
+
+async function storeProfileMedia(file, ownerUserId, kind) {
+    const type = await fileTypeFromBuffer(file.buffer);
+    if (!type || !["image/jpeg", "image/png", "image/webp"].includes(type.mime)) {
+        throw new Error("Profile and cover photos must be JPG, PNG, or WebP images.");
+    }
+    const id = new ObjectId();
+    await new Promise((resolve, reject) => {
+        const stream = profileMedia.openUploadStreamWithId(id, `${kind}-${id.toHexString()}`, {
+            contentType: type.mime,
+            metadata: { owner_user_id: ownerUserId, kind }
+        });
+        stream.once("error", reject);
+        stream.once("finish", resolve);
+        stream.end(file.buffer);
+    });
+    return `/api/profile/media/${id.toHexString()}`;
+}
+
+async function removeProfileMedia(mediaUrl, ownerUserId) {
+    const match = /^\/api\/profile\/media\/([a-f0-9]{24})$/i.exec(mediaUrl || "");
+    if (!match) return;
+    const id = new ObjectId(match[1]);
+    const file = await db.collection("profile_media.files").findOne({ _id: id, "metadata.owner_user_id": ownerUserId }, { projection: { _id: 1 } });
+    if (file) await profileMedia.delete(id).catch(() => {});
+}
+
+app.post("/api/profile/update", signedIn, profileImageMiddleware, async (req, res, next) => {
+    const userId = Number(req.session.userId);
+    const firstName = text(req.body.first_name).trim();
+    const lastName = text(req.body.last_name).trim();
+    const studentId = text(req.body.student_id).trim();
+    const email = text(req.body.email).trim().toLowerCase();
+    const course = text(req.body.course).trim();
+    const yearLevel = text(req.body.year_level).trim();
+
+    if (!firstName || firstName.length > 80 || !lastName || lastName.length > 80) return fail(res, 422, "Enter a first and last name under 80 characters each.");
+    if (!/^[^\s@]+@phinmaed\.com$/i.test(email) || email.length > 254) return fail(res, 422, "Use a valid @phinmaed.com email address.");
+    if (course.length > 100 || yearLevel.length > 40) return fail(res, 422, "Course and year level must be under 100 and 40 characters.");
+
+    let currentUser;
+    try {
+        currentUser = await collections.users.findOne({ id: userId });
+        if (!currentUser) return fail(res, 401, "Your account could not be found. Sign in again.");
+    } catch (error) { return next(error); }
+
+    if (currentUser.role === "student" && !studentIdPattern.test(studentId)) return fail(res, 422, "Student ID must use the format 01-1234-123456.");
+    if (currentUser.role === "student" && (!course || !["1st Year", "2nd Year", "3rd Year", "4th Year"].includes(yearLevel))) return fail(res, 422, "Choose a course and valid year level.");
+    if (currentUser.role !== "student" && !/^[A-Za-z0-9-]{3,24}$/.test(studentId)) return fail(res, 422, "Enter a valid ID using 3–24 letters, numbers, or hyphens.");
+
+    const files = req.files || {};
+    const nextImages = {};
+    const storedImages = [];
+    try {
+        if (files.profile_picture?.[0]) {
+            nextImages.profile_picture = await storeProfileMedia(files.profile_picture[0], userId, "profile");
+            storedImages.push(nextImages.profile_picture);
+        }
+        if (files.cover_photo?.[0]) {
+            nextImages.cover_photo = await storeProfileMedia(files.cover_photo[0], userId, "cover");
+            storedImages.push(nextImages.cover_photo);
+        }
+    } catch (error) {
+        await Promise.all(storedImages.map((url) => removeProfileMedia(url, userId)));
+        if (error.message?.includes("must be JPG")) return fail(res, 422, error.message);
+        return next(error);
+    }
+
+    const set = { first_name: firstName, last_name: lastName, student_id: studentId, email, course, year_level: yearLevel, updated_at: new Date() };
+    if (nextImages.profile_picture) set.profile_picture = nextImages.profile_picture;
+    else if (req.body.remove_profile_picture === "true") set.profile_picture = "";
+    if (nextImages.cover_photo) set.cover_photo = nextImages.cover_photo;
+    else if (req.body.remove_cover_photo === "true") set.cover_photo = "";
+
+    try {
+        const duplicate = await collections.users.findOne({ id: { $ne: userId }, $or: [{ email }, { student_id: studentId }] }, { projection: { id: 1 } });
+        if (duplicate) {
+            await Promise.all(storedImages.map((url) => removeProfileMedia(url, userId)));
+            return fail(res, 409, "That email address or ID is already linked to another account.");
+        }
+        const result = await collections.users.updateOne({ id: userId }, { $set: set });
+        if (!result.matchedCount) {
+            await Promise.all(storedImages.map((url) => removeProfileMedia(url, userId)));
+            return fail(res, 401, "Your account could not be found. Sign in again.");
+        }
+        if (set.profile_picture !== undefined && set.profile_picture !== currentUser.profile_picture) await removeProfileMedia(currentUser.profile_picture, userId);
+        if (set.cover_photo !== undefined && set.cover_photo !== currentUser.cover_photo) await removeProfileMedia(currentUser.cover_photo, userId);
+        const updatedUser = await collections.users.findOne({ id: userId });
+        return ok(res, "Profile updated successfully.", { user: publicUser(updatedUser) });
+    } catch (error) {
+        await Promise.all(storedImages.map((url) => removeProfileMedia(url, userId)));
+        if (duplicateKey(error)) return fail(res, 409, "That email address or ID is already linked to another account.");
+        return next(error);
+    }
 });
 
 async function storeCover(file) {
@@ -1261,7 +1733,7 @@ function validateEventFields(body, creating) {
     return { title, description, location, start_date: start, end_date: end, registration_deadline: deadline, capacity, status, publication_status: publicationStatus, assignment_capacity: assignmentCapacity, participation_open: body.participation_open !== "false", participation_requirements: participationRequirements, eligible_courses: eligibleCourses, eligible_year_levels: eligibleYearLevels, require_event_registration: body.require_event_registration === "true" };
 }
 
-app.post("/api/admin/events/create", councilAccess([...councilPositions]), imageMiddleware, async (req, res, next) => {
+app.post("/api/admin/events/create", adminOnly, imageMiddleware, async (req, res, next) => {
     const event = validateEventFields(req.body, true);
     if (event.error) return fail(res, 422, event.error);
     let cover;
@@ -1277,7 +1749,7 @@ app.post("/api/admin/events/create", councilAccess([...councilPositions]), image
     }
 });
 
-app.post("/api/admin/events/update", councilAccess([...councilPositions]), imageMiddleware, async (req, res, next) => {
+app.post("/api/admin/events/update", adminOnly, imageMiddleware, async (req, res, next) => {
     const id = Number(req.query.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 422, "A valid event ID is required.");
     const event = validateEventFields(req.body, false);
@@ -1298,7 +1770,7 @@ app.post("/api/admin/events/update", councilAccess([...councilPositions]), image
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/events/review", councilAccess(["governor"], false), async (req, res, next) => {
+app.post("/api/admin/events/review", adminOnly, async (req, res, next) => {
     const id = Number(req.body.event_id);
     const decision = text(req.body.decision).trim();
     if (!Number.isInteger(id) || id < 1 || !["approve", "return"].includes(decision)) return fail(res, 422, "Choose a valid event approval decision.");
@@ -1322,7 +1794,7 @@ async function removeLocalCover(cover) {
     await fs.unlink(path.join(uploadRoot, "events", path.basename(cover))).catch(() => {});
 }
 
-app.post("/api/admin/events/delete", councilAccess(["governor"]), async (req, res, next) => {
+app.post("/api/admin/events/delete", adminOnly, async (req, res, next) => {
     const id = Number(req.body.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 422, "A valid event ID is required.");
     try {
@@ -1335,7 +1807,7 @@ app.post("/api/admin/events/delete", councilAccess(["governor"]), async (req, re
 });
 
 // Highlights
-app.get("/api/admin/highlights", councilAccess(["governor", "social_media_manager"]), async (_req, res, next) => {
+app.get("/api/admin/highlights", adminOnly, async (_req, res, next) => {
     try {
         const highlights = await collections.event_highlights.find({}).sort({ created_at: -1 }).toArray();
         const eventIds = [...new Set(highlights.map((highlight) => highlight.event_id))];
@@ -1345,7 +1817,7 @@ app.get("/api/admin/highlights", councilAccess(["governor", "social_media_manage
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/highlights/create", councilAccess(["governor", "social_media_manager"]), async (req, res, next) => {
+app.post("/api/admin/highlights/create", adminOnly, async (req, res, next) => {
     const eventId = Number(req.body.event_id), title = text(req.body.title).trim(), description = text(req.body.description).trim();
     const mediaUrl = text(req.body.media_url).trim(), type = text(req.body.media_type || "image");
     if (!Number.isInteger(eventId) || eventId < 1 || !title || title.length > 255 || !description || !mediaUrl || mediaUrl.length > 255) return fail(res, 422, "Complete the event, title, description, and media URL fields.");
@@ -1362,7 +1834,7 @@ app.post("/api/admin/highlights/create", councilAccess(["governor", "social_medi
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/highlights/delete", councilAccess(["governor", "social_media_manager"]), async (req, res, next) => {
+app.post("/api/admin/highlights/delete", adminOnly, async (req, res, next) => {
     const id = Number(req.body.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 422, "A valid highlight ID is required.");
     try {
@@ -1373,7 +1845,7 @@ app.post("/api/admin/highlights/delete", councilAccess(["governor", "social_medi
 });
 
 // Attendance check-in
-app.get("/api/admin/attendance", councilAccess(["governor", "vice_governor", "secretary", "social_media_manager"]), async (req, res, next) => {
+app.get("/api/admin/attendance", adminOnly, async (req, res, next) => {
     const eventId = req.query.event_id ? Number(req.query.event_id) : null;
     if (eventId !== null && (!Number.isInteger(eventId) || eventId < 1)) return fail(res, 422, "Choose a valid event.");
     try {
@@ -1400,7 +1872,7 @@ app.get("/api/admin/attendance", councilAccess(["governor", "vice_governor", "se
     } catch (error) { return next(error); }
 });
 
-app.get("/api/admin/attendance/lookup", councilAccess(["governor", "vice_governor", "secretary", "social_media_manager"]), async (req, res, next) => {
+app.get("/api/admin/attendance/lookup", adminOnly, async (req, res, next) => {
     const eventId = Number(req.query.event_id);
     const query = text(req.query.q).trim().slice(0, 100);
     if (!Number.isInteger(eventId) || eventId < 1 || query.length < 2) return fail(res, 422, "Choose an event and enter at least two search characters.");
@@ -1419,7 +1891,7 @@ app.get("/api/admin/attendance/lookup", councilAccess(["governor", "vice_governo
     } catch (error) { return next(error); }
 });
 
-app.post("/api/attendance/checkin", councilAccess(["governor", "vice_governor", "secretary", "social_media_manager"]), async (req, res, next) => {
+app.post("/api/attendance/checkin", adminOnly, async (req, res, next) => {
     const code = text(req.body.registration_code).trim();
     const expectedEventId = req.body.event_id ? Number(req.body.event_id) : null;
     if (!code || code.length > 100) return fail(res, 422, "The QR code is empty or invalid.");
@@ -1489,6 +1961,7 @@ async function connectDatabase() {
     await mongoClient.connect();
     db = mongoClient.db(databaseName);
     eventCovers = new GridFSBucket(db, { bucketName: "event_covers" });
+    profileMedia = new GridFSBucket(db, { bucketName: "profile_media" });
     collections = {
         users: db.collection("users"), events: db.collection("events"),
         registrations: db.collection("registrations"), attendance: db.collection("attendance"),
