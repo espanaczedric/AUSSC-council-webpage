@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import Navbar from "../components/Navbar";
 import EventImage from "../components/EventImage";
+import { PublicPageSkeleton, SkeletonBlock, SkeletonEventCards, SkeletonPageHeading } from "../components/LoadingSkeletons";
 import { getPublicEvents } from "../services/api";
 
 const categories = [
@@ -62,7 +63,18 @@ function Events() {
         });
     }, [events, activeCategory, search]);
 
-    if (loading) return <div className="loading" role="status">Loading events…</div>;
+    if (loading) return (
+        <PublicPageSkeleton className="events-page events-loading-skeleton">
+            <header className="events-header events-page-intro"><SkeletonPageHeading /></header>
+            <section className="event-browser" aria-hidden="true">
+                <div className="event-browser-toolbar">
+                    <div className="ui-skeleton-filter-tabs">{Array.from({ length: 4 }, (_, index) => <SkeletonBlock key={index} />)}</div>
+                    <SkeletonBlock className="ui-skeleton-search" />
+                </div>
+                <SkeletonEventCards />
+            </section>
+        </PublicPageSkeleton>
+    );
 
     return (
         <>

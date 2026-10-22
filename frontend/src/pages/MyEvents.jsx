@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import Navbar from "../components/Navbar";
 import EventImage from "../components/EventImage";
+import { PublicPageSkeleton, SkeletonBlock, SkeletonRows } from "../components/LoadingSkeletons";
 import { apiRequest, getMyEventAssignments, getPublicEvents, signUpForEventAssignment } from "../services/api";
 
 export default function MyEvents() {
@@ -30,7 +31,11 @@ export default function MyEvents() {
         catch (error) { setFeedback(error.message); }
     }
 
-    if (loading) return <><Navbar /><main className="my-events-page"><p className="loading" role="status">Loading your events…</p></main></>;
+    if (loading) return <PublicPageSkeleton className="my-events-page member-events-page ui-member-events-loading">
+        <header className="events-header"><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonBlock className="ui-skeleton-title" /><SkeletonBlock className="ui-skeleton-description" /></header>
+        <section className="member-assignment-section" aria-hidden="true"><header><div><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonBlock className="ui-skeleton-section-title" /><SkeletonBlock className="ui-skeleton-description" /></div></header><SkeletonRows count={2} /></section>
+        <section className="my-events-registration-section" aria-hidden="true"><header><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonBlock className="ui-skeleton-section-title" /><SkeletonBlock className="ui-skeleton-description" /></header><SkeletonRows count={3} image /></section>
+    </PublicPageSkeleton>;
     return <><Navbar /><main className="my-events-page member-events-page">
         <header className="events-header"><span>YOUR ACTIVITY</span><h1>My Events & assignments</h1><p>View your event registrations, QR passes, and official council assignment sign-ups.</p></header>
         {feedback && <p className="my-events-feedback" role="status">{feedback}</p>}

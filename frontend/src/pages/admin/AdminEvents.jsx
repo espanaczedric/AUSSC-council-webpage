@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import AdminNav from "../../components/AdminNav";
 import EventImage from "../../components/EventImage";
+import { AdminPageSkeleton, SkeletonBlock, SkeletonPageHeading, SkeletonRows } from "../../components/LoadingSkeletons";
 import { deleteAdminEvent, getAdminEvents } from "../../services/api";
 
 function AdminEvents() {
@@ -30,6 +31,11 @@ function AdminEvents() {
 
         return matchesStatus && matchesQuery;
     });
+
+    if (loading) return <AdminPageSkeleton className="admin-events-page">
+        <header className="admin-header admin-page-heading"><SkeletonPageHeading /></header>
+        <section className="admin-list-section"><div className="admin-list-toolbar"><SkeletonBlock className="ui-skeleton-search" /><SkeletonBlock className="ui-skeleton-filter" /></div><SkeletonRows count={5} image /></section>
+    </AdminPageSkeleton>;
 
     async function confirmDelete(event) {
         setDeletingId(event.id);
@@ -93,9 +99,7 @@ function AdminEvents() {
 
                     {error && <p className="admin-feedback is-error" role="alert">{error}</p>}
                     {notice && <p className="admin-feedback" role="status">{notice}</p>}
-                    {loading ? (
-                        <p className="admin-feedback" role="status">Loading events…</p>
-                    ) : filteredEvents.length ? (
+                    {filteredEvents.length ? (
                         <div className="admin-event-list">
                             {filteredEvents.map((event) => (
                                 <article className="admin-event-row" key={event.id}>

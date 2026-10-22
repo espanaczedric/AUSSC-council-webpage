@@ -6,6 +6,7 @@ import {
 
 import Navbar from "../components/Navbar";
 import RegistrationQR from "../components/RegistrationQR";
+import { PublicPageSkeleton, SkeletonBlock } from "../components/LoadingSkeletons";
 import { apiRequest } from "../services/api";
 
 function RegistrationConfirmation() {
@@ -208,15 +209,13 @@ function RegistrationConfirmation() {
     }, [code]);
 
 
-    if (loading) {
-
-        return (
-            <div className="loading">
-                Loading registration...
-            </div>
-        );
-
-    }
+    if (loading) return <PublicPageSkeleton className="confirmation-page registration-loading-skeleton">
+        <section className="confirmation-card" aria-hidden="true">
+            <div className="confirmation-header"><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonBlock className="ui-skeleton-section-title" /><SkeletonBlock className="ui-skeleton-description" /></div>
+            <div className="registration-details">{Array.from({ length: 4 }, (_, index) => <div key={index}><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonBlock className="ui-skeleton-detail-value" /></div>)}</div>
+            <div className="registration-qr"><SkeletonBlock className="ui-skeleton-section-title is-small" /><SkeletonBlock className="ui-skeleton-description" /><SkeletonBlock className="ui-skeleton-qr" /><SkeletonBlock className="ui-skeleton-button" /></div>
+        </section>
+    </PublicPageSkeleton>;
 
 
     if (!registration) {

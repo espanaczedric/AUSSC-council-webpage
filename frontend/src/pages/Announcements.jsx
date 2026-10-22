@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Navbar from "../components/Navbar";
+import { SkeletonRows } from "../components/LoadingSkeletons";
 import { getPublicEvents } from "../services/api";
 
 function formatDate(value) {
@@ -56,7 +57,7 @@ function Announcements() {
                     </div>
 
                     {loading ? (
-                        <div className="updates-loading" role="status"><span />Loading published event updates…</div>
+                        <><SkeletonRows count={4} className="updates-skeleton" /><span className="sr-only" role="status">Loading published event updates…</span></>
                     ) : error ? (
                         <div className="event-empty-state" role="alert"><h2>Updates aren’t available right now.</h2><p>{error}</p></div>
                     ) : updates.length ? (

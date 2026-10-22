@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Navbar from "../components/Navbar";
+import { SkeletonBlock } from "../components/LoadingSkeletons";
 import { getCommitteeDirectory, getEventImageUrl } from "../services/api";
 
 const committees = [
@@ -234,7 +235,7 @@ function CommitteeDirectory() {
                                             {committee.areas.map((area) => <li key={area}>{area}</li>)}
                                         </ul>
                                         <span className="committee-card-footer">
-                                            <span>{directoryLoading ? "Loading members…" : `${count} ${count === 1 ? "member" : "members"}`}</span>
+                                            <span>{directoryLoading ? <SkeletonBlock className="directory-skeleton-count" /> : `${count} ${count === 1 ? "member" : "members"}`}</span>
                                             <span>{selected ? "Close roster ↑" : "View members →"}</span>
                                         </span>
                                     </article>
@@ -259,7 +260,7 @@ function CommitteeDirectory() {
                                     </button>
                                 </header>
                                 {directoryLoading ? (
-                                    <p className="directory-roster-empty" role="status">Loading assigned members…</p>
+                                    <div className="ui-skeleton-modal-roster" role="status" aria-label="Loading assigned members">{Array.from({ length: 4 }, (_, index) => <div className="ui-skeleton-modal-member" key={index}><SkeletonBlock className="ui-skeleton-modal-avatar" /><div className="ui-skeleton-modal-copy"><SkeletonBlock /><SkeletonBlock /></div></div>)}</div>
                                 ) : directoryError ? (
                                     <p className="directory-roster-empty">The roster is temporarily unavailable. Please try again.</p>
                                 ) : activeMembers.length ? (

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import AdminNav from "../../components/AdminNav";
+import { AdminPageSkeleton, SkeletonBlock, SkeletonPageHeading, SkeletonTable } from "../../components/LoadingSkeletons";
 import { getAdminUsers, saveCommitteeAssignment, saveCouncilAppointment } from "../../services/api";
 import { hasExecutiveAppointment } from "../../utils/workspaceAccess";
 
@@ -49,6 +50,11 @@ function Users() {
         const searchText = `${user.first_name} ${user.last_name} ${user.student_id} ${user.email} ${user.course || ""}`.toLowerCase();
         return matchesRole && searchText.includes(query.trim().toLowerCase());
     });
+
+    if (loading) return <AdminPageSkeleton>
+        <header className="admin-header admin-page-heading"><SkeletonPageHeading /></header>
+        <section className="admin-list-section"><div className="admin-list-toolbar"><SkeletonBlock className="ui-skeleton-search" /><SkeletonBlock className="ui-skeleton-filter" /></div><SkeletonTable rows={6} columns={8} /></section>
+    </AdminPageSkeleton>;
 
     async function saveAppointment(user) {
         const appointment = appointments[user.id] || { council_position: "", council_department: "" };
@@ -107,9 +113,7 @@ function Users() {
 
                 {error && <p className="admin-feedback is-error" role="alert">{error}</p>}
                 {notice && <p className="admin-feedback" role="status">{notice}</p>}
-                {loading ? (
-                    <p className="admin-feedback" role="status">Loading accounts…</p>
-                ) : filteredUsers.length ? (
+                {filteredUsers.length ? (
                     <div className="admin-data-scroll">
                         <table className="admin-data-table">
                             <thead>

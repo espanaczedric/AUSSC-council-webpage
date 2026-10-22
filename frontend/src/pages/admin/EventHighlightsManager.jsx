@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import AdminNav from "../../components/AdminNav";
 import EventImage from "../../components/EventImage";
+import { AdminPageSkeleton, SkeletonBlock, SkeletonPageHeading, SkeletonRows } from "../../components/LoadingSkeletons";
 import {
     createAdminHighlight,
     deleteAdminHighlight,
@@ -84,6 +85,11 @@ function EventHighlightsManager() {
             setError(requestError.message);
         }
     }
+
+    if (loading) return <AdminPageSkeleton>
+        <header className="admin-header admin-page-heading"><SkeletonPageHeading /></header>
+        <div className="admin-highlight-layout"><section className="admin-form admin-highlight-form ui-skeleton-form"><SkeletonBlock className="ui-skeleton-section-title" />{Array.from({ length: 5 }, (_, index) => <div key={index}><SkeletonBlock className="ui-skeleton-form-label" /><SkeletonBlock className="ui-skeleton-form-field" /></div>)}<SkeletonBlock className="ui-skeleton-button" /></section><section className="admin-highlight-list"><SkeletonBlock className="ui-skeleton-section-title" /><SkeletonRows count={4} image /></section></div>
+    </AdminPageSkeleton>;
 
     return (
         <>
@@ -177,9 +183,7 @@ function EventHighlightsManager() {
                         </div>
                     </div>
 
-                    {loading ? (
-                        <p className="admin-feedback" role="status">Loading highlights…</p>
-                    ) : highlights.length ? (
+                    {highlights.length ? (
                         <div className="admin-highlight-items">
                             {highlights.map((highlight) => (
                                 <article className="admin-highlight-item" key={highlight.id}>

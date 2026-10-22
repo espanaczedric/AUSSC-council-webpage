@@ -6,6 +6,7 @@ import {
 
 import Navbar from "../components/Navbar";
 import EventImage from "../components/EventImage";
+import { PublicPageSkeleton, SkeletonBlock } from "../components/LoadingSkeletons";
 import { getEvent, getEventHighlights, getEventImageUrl } from "../services/api";
 
 function EventDetailsPage() {
@@ -53,13 +54,10 @@ function EventDetailsPage() {
     }, [id]);
 
 
-    if (loading) {
-        return (
-            <div className="loading">
-                Loading event...
-            </div>
-        );
-    }
+    if (loading) return <PublicPageSkeleton className="event-details-page event-details-loading-skeleton">
+        <section className="event-details-hero" aria-hidden="true"><div className="event-details-overlay"><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonBlock className="ui-skeleton-title" /></div></section>
+        <div className="event-details-content" aria-hidden="true"><section className="event-main-info"><SkeletonBlock className="ui-skeleton-section-title" /><SkeletonBlock className="ui-skeleton-description" /><SkeletonBlock className="ui-skeleton-description is-short" /><SkeletonBlock className="ui-skeleton-section-title is-small" /><SkeletonBlock className="ui-skeleton-description" /><SkeletonBlock className="ui-skeleton-description" /></section><aside className="event-information"><SkeletonBlock className="ui-skeleton-description" /><SkeletonBlock className="ui-skeleton-description is-short" /><SkeletonBlock className="ui-skeleton-description" /><SkeletonBlock className="ui-skeleton-button" /></aside></div>
+    </PublicPageSkeleton>;
 
 
     if (!event) {

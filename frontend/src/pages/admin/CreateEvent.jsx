@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import AdminNav from "../../components/AdminNav";
 import EventImage from "../../components/EventImage";
+import { AdminPageSkeleton, SkeletonBlock, SkeletonPageHeading } from "../../components/LoadingSkeletons";
 import {
     createAdminEvent,
     getEvent,
@@ -148,14 +149,12 @@ function CreateEvent({ editMode = false }) {
         : "Date and time will appear here";
 
     if (eventLoading) {
-        return (
-            <>
-                <AdminNav />
-                <main className="admin-page">
-                    <p className="admin-feedback" role="status">Loading event…</p>
-                </main>
-            </>
-        );
+        return <AdminPageSkeleton className="admin-create-page">
+            <header className="admin-header admin-page-heading"><SkeletonPageHeading /></header>
+            <div className="admin-form admin-create-form ui-skeleton-form">
+                {Array.from({ length: 4 }, (_, section) => <section className="admin-form-section" key={section}><SkeletonBlock className="ui-skeleton-section-title is-small" /><div className="ui-skeleton-form-grid">{Array.from({ length: section === 0 ? 4 : 3 }, (_, field) => <div key={field}><SkeletonBlock className="ui-skeleton-form-label" /><SkeletonBlock className={field === 1 && section === 0 ? "ui-skeleton-form-area" : "ui-skeleton-form-field"} /></div>)}</div></section>)}
+            </div>
+        </AdminPageSkeleton>;
     }
 
     if (editMode && eventLoadError) {

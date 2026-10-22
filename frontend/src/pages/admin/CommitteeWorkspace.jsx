@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import AdminNav from "../../components/AdminNav";
+import { AdminPageSkeleton, SkeletonBlock, SkeletonPageHeading, SkeletonRows } from "../../components/LoadingSkeletons";
 import { deleteCommitteeWork, getCommitteeWork, reviewAdminEvent, reviewEventAssignment, saveCommitteeWork, updateCommitteeChecklist } from "../../services/api";
 import { hasExecutiveAccess } from "../../utils/workspaceAccess";
 
@@ -33,11 +34,12 @@ export default function CommitteeWorkspace() {
     const [view, setView] = useState("board");
     const [query, setQuery] = useState("");
     const [busy, setBusy] = useState(false);
+    const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
 
     const load = useCallback(() => getCommitteeWork(committee).then(setData).catch((requestError) => setError(requestError.message)), [committee]);
-    useEffect(() => { load(); }, [load]);
+    useEffect(() => { setLoading(true); load().finally(() => setLoading(false)); }, [load]);
     useEffect(() => { setView(committee === "program" ? "list" : "board"); setForm(emptyForm); }, [committee]);
 
     const items = useMemo(() => data.items.filter((item) => {
@@ -92,6 +94,12 @@ export default function CommitteeWorkspace() {
         ["Approved budget / expenses", `${new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 0 }).format(overview.approved_allocation_total || 0)} / ${new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 0 }).format(overview.recorded_expense_total || 0)}`],
         ["Attendance recorded", `${overview.attendance_count || 0} check-ins · ${overview.registration_count || 0} registrations`]
     ] : workspace.focus.map((label, index) => [label, index === 0 ? `${items.filter((item) => !["Complete", "Published", "Archived"].includes(item.status)).length} active items` : index === 1 ? `${overdue} overdue` : `${items.length} total records`]);
+
+    if (loading) return <AdminPageSkeleton className="committee-workspace-page">
+        <header className="admin-header admin-page-heading"><SkeletonPageHeading /></header>
+        <section className="committee-focus-grid" aria-hidden="true">{Array.from({ length: committee === "executive" ? 5 : 3 }, (_, index) => <article key={index}><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonBlock className="ui-skeleton-section-title is-small" /><SkeletonBlock className="ui-skeleton-description" /></article>)}</section>
+        <div className="committee-work-board-skeleton"><section><SkeletonBlock className="ui-skeleton-section-title" /><div className="ui-skeleton-board-columns">{Array.from({ length: committee === "publication" ? 4 : 3 }, (_, index) => <div key={index}><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonRows count={2} /></div>)}</div></section><section><SkeletonBlock className="ui-skeleton-section-title" />{Array.from({ length: 5 }, (_, index) => <div className="ui-skeleton-work-field" key={index}><SkeletonBlock className="ui-skeleton-form-label" /><SkeletonBlock className="ui-skeleton-form-field" /></div>)}</section></div>
+    </AdminPageSkeleton>;
 
     return <><AdminNav /><main className="admin-page committee-workspace-page">
         <header className="admin-header admin-page-heading"><div><span>COMMITTEE WORKSPACE</span><h1>{workspace.title}</h1><p>{workspace.intro}</p>{canSwitchWorkspace && <nav className="committee-workspace-tabs" aria-label="Choose committee workspace">{Object.entries(workspaces).map(([key, item]) => <Link key={key} className={key === committee ? "is-active" : ""} to={`/admin/committees/${key}`}>{item.title.replace(" Committee", "")}</Link>)}</nav>}</div></header>

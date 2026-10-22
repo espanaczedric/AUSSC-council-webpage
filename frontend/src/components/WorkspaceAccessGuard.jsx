@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
+import AdminNav from "./AdminNav";
+import Navbar from "./Navbar";
+import { SkeletonBlock } from "./LoadingSkeletons";
 import { getCurrentUser } from "../services/api";
 import { committeeLabels, getCommitteeWorkspacePath, hasExecutiveAccess } from "../utils/workspaceAccess";
 
@@ -11,6 +14,8 @@ export default function WorkspaceAccessGuard({ children, committeeRoute = false,
     const [state, setState] = useState("checking");
     const [error, setError] = useState("");
     const [attempt, setAttempt] = useState(0);
+    let cachedUser = null;
+    try { cachedUser = JSON.parse(localStorage.getItem("user") || "null"); } catch { /* Use the generic workspace shell while the session is verified. */ }
 
     useEffect(() => {
         let active = true;
@@ -79,5 +84,14 @@ export default function WorkspaceAccessGuard({ children, committeeRoute = false,
             </main>
         );
     }
-    return <main className="workspace-access-state" role="status" aria-live="polite">Checking your workspace access…</main>;
+    const usePublicShell = councilRoute && !hasExecutiveAccess(cachedUser);
+    return <>
+        {usePublicShell ? <Navbar /> : <AdminNav />}
+        <main className={`workspace-access-skeleton${usePublicShell ? " is-public" : ""}`} aria-busy="true" aria-hidden="true">
+            <div className="workspace-skeleton-heading"><SkeletonBlock className="workspace-skeleton-eyebrow" /><SkeletonBlock className="workspace-skeleton-title" /><SkeletonBlock className="workspace-skeleton-description" /></div>
+            <div className="workspace-skeleton-metrics">{Array.from({ length: 4 }, (_, index) => <div key={index}><SkeletonBlock className="workspace-skeleton-label" /><SkeletonBlock className="workspace-skeleton-number" /><SkeletonBlock className="workspace-skeleton-description" /></div>)}</div>
+            <div className="workspace-skeleton-panels"><section><SkeletonBlock className="workspace-skeleton-title is-small" /><SkeletonBlock className="workspace-skeleton-description" /><SkeletonBlock className="workspace-skeleton-description" /><SkeletonBlock className="workspace-skeleton-description is-short" /><SkeletonBlock className="workspace-skeleton-description" /></section><section><SkeletonBlock className="workspace-skeleton-title is-small" />{Array.from({ length: 3 }, (_, index) => <div className="workspace-skeleton-item" key={index}><SkeletonBlock className="workspace-skeleton-label" /><SkeletonBlock className="workspace-skeleton-description" /></div>)}</section></div>
+        </main>
+        <span className="sr-only" role="status" aria-live="polite">Checking workspace permissions…</span>
+    </>;
 }

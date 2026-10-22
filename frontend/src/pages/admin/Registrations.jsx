@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import AdminNav from "../../components/AdminNav";
+import { AdminPageSkeleton, SkeletonBlock, SkeletonPageHeading, SkeletonTable } from "../../components/LoadingSkeletons";
 import { getAdminRegistrations } from "../../services/api";
 
 function Registrations() {
@@ -26,6 +27,11 @@ function Registrations() {
         const searchText = `${registration.first_name} ${registration.last_name} ${registration.student_id} ${registration.event_title} ${registration.registration_code}`.toLowerCase();
         return matchesStatus && searchText.includes(query.trim().toLowerCase());
     });
+
+    if (loading) return <AdminPageSkeleton>
+        <header className="admin-header admin-page-heading"><SkeletonPageHeading /></header>
+        <section className="admin-list-section"><div className="admin-list-toolbar"><SkeletonBlock className="ui-skeleton-search" /><SkeletonBlock className="ui-skeleton-filter" /></div><SkeletonTable rows={6} columns={6} /></section>
+    </AdminPageSkeleton>;
 
     return (
         <>
@@ -62,9 +68,7 @@ function Registrations() {
                 </div>
 
                 {error && <p className="admin-feedback is-error" role="alert">{error}</p>}
-                {loading ? (
-                    <p className="admin-feedback" role="status">Loading registrations…</p>
-                ) : filteredRegistrations.length ? (
+                {filteredRegistrations.length ? (
                     <div className="admin-data-scroll">
                         <table className="admin-data-table">
                             <thead>

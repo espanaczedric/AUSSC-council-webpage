@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 
 import { apiRequest, getCurrentUser } from "../services/api";
+import { SkeletonBlock } from "../components/LoadingSkeletons";
 
 function Register() {
 
@@ -58,8 +59,8 @@ function Register() {
 
         <main className="registration-page">
 
-            <h1>Register for Event</h1>
-            {loading ? <p role="status">Checking your account…</p> : user ? (
+            {loading ? <><SkeletonBlock className="ui-skeleton-section-title" /><div className="registration-loading-form" aria-busy="true" aria-hidden="true"><SkeletonBlock className="ui-skeleton-description" /><SkeletonBlock className="ui-skeleton-description is-short" /><SkeletonBlock className="ui-skeleton-button" /></div><span className="sr-only" role="status">Checking your account…</span></> : <h1>Register for Event</h1>}
+            {loading ? null : user ? (
             <form onSubmit={handleSubmit}>
 
                 <Link to="/" className="form-back-link">

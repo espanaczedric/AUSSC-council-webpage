@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import AdminNav from "../../components/AdminNav";
+import { AdminPageSkeleton, SkeletonBlock, SkeletonPageHeading, SkeletonTable } from "../../components/LoadingSkeletons";
 import { getAdminEvents, getAdminFinancialRecords, saveAdminFinancialRecord } from "../../services/api";
 
 const freshRecord = { id: "", type: "allocation", title: "", period: new Date().toISOString().slice(0, 7), category: "", amount: "", status: "proposed", public_status: "private", event_id: "", committee: "", document_url: "" };
@@ -9,11 +10,14 @@ const money = (amount) => new Intl.NumberFormat("en-PH", { style: "currency", cu
 export default function AdminFinance() {
     const [records, setRecords] = useState([]); const [events, setEvents] = useState([]); const [form, setForm] = useState(freshRecord);
     const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const [saving, setSaving] = useState(false);
-    async function load() {
+    const [loading, setLoading] = useState(true);
+    async function load(showSkeleton = false) {
+        if (showSkeleton) setLoading(true);
         try { const [finance, eventData] = await Promise.all([getAdminFinancialRecords(), getAdminEvents()]); setRecords(finance.records || []); setEvents(eventData.events || []); }
         catch (e) { setError(e.message); }
+        finally { if (showSkeleton) setLoading(false); }
     }
-    useEffect(() => { load(); }, []);
+    useEffect(() => { load(true); }, []);
     const allocation = records.filter((item) => item.type === "allocation" && ["approved", "recorded"].includes(item.status)).reduce((sum, item) => sum + Number(item.amount), 0);
     const expense = records.filter((item) => item.type === "expense" && item.status === "recorded").reduce((sum, item) => sum + Number(item.amount), 0);
     async function submit(event) {
@@ -23,6 +27,12 @@ export default function AdminFinance() {
         finally { setSaving(false); }
     }
     function edit(record) { setForm({ ...record, event_id: record.event_id || "", amount: String(record.amount) }); window.scrollTo({ top: 0, behavior: "smooth" }); }
+    if (loading) return <AdminPageSkeleton className="finance-admin-page">
+        <header className="admin-header admin-page-heading"><SkeletonPageHeading /></header>
+        <div className="finance-metric-grid">{Array.from({ length: 4 }, (_, index) => <article key={index}><SkeletonBlock className="ui-skeleton-finance-label" /><SkeletonBlock className="ui-skeleton-finance-value" /></article>)}</div>
+        <section className="committee-create-card"><SkeletonBlock className="ui-skeleton-section-title" /><div className="ui-skeleton-form-grid">{Array.from({ length: 8 }, (_, index) => <div key={index}><SkeletonBlock className="ui-skeleton-form-label" /><SkeletonBlock className="ui-skeleton-form-field" /></div>)}</div></section>
+        <section className="committee-items-section"><SkeletonBlock className="ui-skeleton-section-title" /><SkeletonTable rows={5} columns={7} /></section>
+    </AdminPageSkeleton>;
     return <><AdminNav /><main className="admin-page finance-admin-page">
         <header className="admin-header admin-page-heading"><div><span>FINANCIAL STEWARDSHIP</span><h1>Finance & transparency</h1><p>Record allocations and expenses. Public figures include approved or recorded entries only.</p></div></header>
         <section className="finance-metric-grid"><article><span>Approved allocations</span><strong>{money(allocation)}</strong></article><article><span>Recorded expenses</span><strong>{money(expense)}</strong></article><article><span>Available balance</span><strong>{money(allocation - expense)}</strong></article><article><span>Private / proposed items</span><strong>{records.filter((item) => item.status === "proposed" || item.status === "pending").length}</strong></article></section>

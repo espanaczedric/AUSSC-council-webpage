@@ -58,7 +58,7 @@ function OverviewMetric({ label, value, detail, to }) {
         : <article className="admin-overview-metric">{content}</article>;
 }
 
-function RegistrationTrend({ months, values, loading }) {
+function RegistrationTrend({ months, values }) {
     const width = 660;
     const height = 248;
     const left = 48;
@@ -108,15 +108,14 @@ function RegistrationTrend({ months, values, loading }) {
                         const x = left + (months.length > 1 ? index * (right - left) / (months.length - 1) : (right - left) / 2);
                         return <text key={month} x={x} y={bottom + 26} textAnchor="middle" className="admin-trend-axis-label">{formatMonth(month)}</text>;
                     })}
-                    {!hasData && <text x={(left + right) / 2} y={(top + bottom) / 2} textAnchor="middle" className="admin-trend-empty-label">{loading ? "Loading student activity…" : "No registration activity in this period"}</text>}
+                    {!hasData && <text x={(left + right) / 2} y={(top + bottom) / 2} textAnchor="middle" className="admin-trend-empty-label">No registration activity in this period</text>}
                 </svg>
-                {loading && <span className="admin-chart-loading" role="status">Updating chart…</span>}
             </div>
         </article>
     );
 }
 
-function HorizontalBreakdown({ title, eyebrow, rows, emptyLabel, link, loading }) {
+function HorizontalBreakdown({ title, eyebrow, rows, emptyLabel, link }) {
     const maximum = Math.max(1, ...rows.map((row) => row.value));
     const total = rows.reduce((sum, row) => sum + row.value, 0);
     return (
@@ -134,12 +133,12 @@ function HorizontalBreakdown({ title, eyebrow, rows, emptyLabel, link, loading }
                         </div>
                     </div>
                 ))}
-            </div> : <p className="admin-overview-chart-empty">{loading ? "Loading dashboard records…" : emptyLabel}</p>}
+            </div> : <p className="admin-overview-chart-empty">{emptyLabel}</p>}
         </article>
     );
 }
 
-function MeetingQuorumChart({ meetings, threshold, loading }) {
+function MeetingQuorumChart({ meetings, threshold }) {
     return (
         <article className="admin-overview-chart-card admin-quorum-card">
             <div className="admin-overview-chart-heading">
@@ -163,8 +162,96 @@ function MeetingQuorumChart({ meetings, threshold, loading }) {
                     </div>;
                 })}
                 <div className="admin-quorum-legend"><span><i /> Attendance</span><span><b /> Two-thirds quorum</span></div>
-            </div> : <p className="admin-overview-chart-empty">{loading ? "Loading council attendance…" : "No completed mandatory meetings have attendance records for this academic period yet."}</p>}
+            </div> : <p className="admin-overview-chart-empty">No completed mandatory meetings have attendance records for this academic period yet.</p>}
         </article>
+    );
+}
+
+function AdminSkeletonBar({ className = "" }) {
+    return <i className={`admin-skeleton-block ${className}`} aria-hidden="true" />;
+}
+
+function DashboardChartSkeleton({ kind = "rows", rowCount = 4 }) {
+    return (
+        <article className="admin-overview-chart-card admin-skeleton-chart" aria-hidden="true">
+            <div className="admin-overview-chart-heading">
+                <div><AdminSkeletonBar className="admin-skeleton-chart-eyebrow" /><AdminSkeletonBar className="admin-skeleton-chart-title" /></div>
+                <AdminSkeletonBar className="admin-skeleton-chart-action" />
+            </div>
+            {kind === "graph" ? (
+                <div className="admin-skeleton-graph">
+                    {Array.from({ length: 6 }, (_, index) => (
+                        <span key={index}>
+                            <i style={{ height: `${32 + ((index * 37) % 52)}%` }} />
+                            <i style={{ height: `${22 + ((index * 29) % 48)}%` }} />
+                        </span>
+                    ))}
+                </div>
+            ) : (
+                <div className="admin-skeleton-rows">
+                    {Array.from({ length: rowCount }, (_, index) => (
+                        <div className="admin-skeleton-row" key={index}>
+                            <div><AdminSkeletonBar className="admin-skeleton-row-label" /><AdminSkeletonBar className="admin-skeleton-row-value" /></div>
+                            <AdminSkeletonBar className="admin-skeleton-row-track" />
+                        </div>
+                    ))}
+                </div>
+            )}
+        </article>
+    );
+}
+
+function AdminDashboardSkeleton() {
+    return (
+        <>
+            <AdminNav />
+            <main className="admin-page admin-dashboard admin-overview-page admin-dashboard-skeleton" aria-busy="true">
+                <section className="admin-header admin-page-heading" aria-hidden="true">
+                    <div className="admin-dashboard-skeleton-heading">
+                        <AdminSkeletonBar className="admin-skeleton-page-eyebrow" />
+                        <AdminSkeletonBar className="admin-skeleton-page-title" />
+                        <AdminSkeletonBar className="admin-skeleton-page-subtitle" />
+                    </div>
+                    <AdminSkeletonBar className="admin-skeleton-create-action" />
+                </section>
+
+                <section className="admin-overview-group" aria-hidden="true">
+                    <div className="admin-overview-heading admin-dashboard-skeleton-section-heading">
+                        <div><AdminSkeletonBar className="admin-skeleton-section-eyebrow" /><AdminSkeletonBar className="admin-skeleton-section-title" /><AdminSkeletonBar className="admin-skeleton-section-detail" /></div>
+                    </div>
+                    <div className="admin-overview-metrics">
+                        {Array.from({ length: 4 }, (_, index) => <article className="admin-overview-metric" key={index}><AdminSkeletonBar className="admin-skeleton-metric-label" /><AdminSkeletonBar className="admin-skeleton-metric-number" /><AdminSkeletonBar className="admin-skeleton-metric-detail" /></article>)}
+                    </div>
+                    <div className="admin-overview-chart-grid student-chart-grid">
+                        <DashboardChartSkeleton kind="graph" />
+                        <DashboardChartSkeleton rowCount={4} />
+                    </div>
+                </section>
+
+                <section className="admin-overview-group" aria-hidden="true">
+                    <div className="admin-overview-heading admin-dashboard-skeleton-section-heading">
+                        <div><AdminSkeletonBar className="admin-skeleton-section-eyebrow" /><AdminSkeletonBar className="admin-skeleton-section-title" /><AdminSkeletonBar className="admin-skeleton-section-detail" /></div>
+                    </div>
+                    <div className="admin-overview-metrics">
+                        {Array.from({ length: 4 }, (_, index) => <article className="admin-overview-metric" key={index}><AdminSkeletonBar className="admin-skeleton-metric-label" /><AdminSkeletonBar className="admin-skeleton-metric-number" /><AdminSkeletonBar className="admin-skeleton-metric-detail" /></article>)}
+                    </div>
+                    <div className="admin-overview-chart-grid council-chart-grid">
+                        <DashboardChartSkeleton rowCount={4} />
+                        <DashboardChartSkeleton rowCount={5} />
+                        <DashboardChartSkeleton kind="graph" />
+                        <DashboardChartSkeleton rowCount={4} />
+                        <DashboardChartSkeleton rowCount={3} />
+                    </div>
+                </section>
+
+                <section className="admin-section admin-upcoming-overview" aria-hidden="true">
+                    <div className="admin-section-heading admin-dashboard-skeleton-upcoming-heading"><div><AdminSkeletonBar className="admin-skeleton-section-eyebrow" /><AdminSkeletonBar className="admin-skeleton-section-title" /></div><AdminSkeletonBar className="admin-skeleton-chart-action" /></div>
+                    <div className="admin-skeleton-upcoming-row"><AdminSkeletonBar className="admin-skeleton-upcoming-image" /><div><AdminSkeletonBar className="admin-skeleton-row-label" /><AdminSkeletonBar className="admin-skeleton-upcoming-title" /><AdminSkeletonBar className="admin-skeleton-section-detail" /></div></div>
+                    <div className="admin-skeleton-upcoming-row"><AdminSkeletonBar className="admin-skeleton-upcoming-image" /><div><AdminSkeletonBar className="admin-skeleton-row-label" /><AdminSkeletonBar className="admin-skeleton-upcoming-title" /><AdminSkeletonBar className="admin-skeleton-section-detail" /></div></div>
+                </section>
+                <span className="sr-only" role="status">Loading the executive dashboard…</span>
+            </main>
+        </>
     );
 }
 
@@ -214,6 +301,8 @@ function AdminDashboard() {
     const meetings = council.meeting_chart || [];
     const recentEvents = events.filter((event) => ["upcoming", "ongoing"].includes(event.display_status));
 
+    if (loading) return <AdminDashboardSkeleton />;
+
     return (
         <>
             <AdminNav />
@@ -240,13 +329,13 @@ function AdminDashboard() {
                         detail="Event reach and attendance verified through student registrations and QR check-ins."
                     />
                     <div className="admin-overview-metrics">
-                        <OverviewMetric label="Student accounts" value={loading ? "—" : displayNumber(students.account_count)} detail="Registered student accounts" to="/admin/users" />
-                        <OverviewMetric label="Event registrations" value={loading ? "—" : displayNumber(students.registration_count)} detail="Active student registrations" to="/admin/registrations" />
-                        <OverviewMetric label="QR check-ins" value={loading ? "—" : displayNumber(students.check_in_count)} detail="Student attendance recorded" to="/admin/attendance" />
-                        <OverviewMetric label="Check-in rate" value={loading ? "—" : `${Number(students.check_in_rate || 0)}%`} detail="Check-ins / active registrations" to="/admin/attendance" />
+                        <OverviewMetric label="Student accounts" value={displayNumber(students.account_count)} detail="Registered student accounts" to="/admin/users" />
+                        <OverviewMetric label="Event registrations" value={displayNumber(students.registration_count)} detail="Active student registrations" to="/admin/registrations" />
+                        <OverviewMetric label="QR check-ins" value={displayNumber(students.check_in_count)} detail="Student attendance recorded" to="/admin/attendance" />
+                        <OverviewMetric label="Check-in rate" value={`${Number(students.check_in_rate || 0)}%`} detail="Check-ins / active registrations" to="/admin/attendance" />
                     </div>
                     <div className="admin-overview-chart-grid student-chart-grid">
-                        <RegistrationTrend months={months} values={trend} loading={loading} />
+                        <RegistrationTrend months={months} values={trend} />
                         <HorizontalBreakdown
                             eyebrow="MOST COMMON COURSES"
                             title="Accounts by course"
@@ -257,7 +346,6 @@ function AdminDashboard() {
                             }))}
                             emptyLabel="Course information has not been recorded for student accounts yet."
                             link={{ to: "/admin/users", label: "View students" }}
-                            loading={loading}
                         />
                     </div>
                 </section>
@@ -283,7 +371,6 @@ function AdminDashboard() {
                             }))}
                             emptyLabel="No committee assignments have been recorded yet."
                             link={{ to: "/admin/users", label: "Manage assignments" }}
-                            loading={loading}
                         />
                         <HorizontalBreakdown
                             eyebrow="EXECUTIVE EVENT OVERSIGHT"
@@ -295,9 +382,8 @@ function AdminDashboard() {
                             }))}
                             emptyLabel="No events have been created yet."
                             link={{ to: "/admin/events", label: "Manage events" }}
-                            loading={loading}
                         />
-                        <MeetingQuorumChart meetings={meetings} threshold={Number(council.quorum_threshold || 0)} loading={loading} />
+                        <MeetingQuorumChart meetings={meetings} threshold={Number(council.quorum_threshold || 0)} />
                         <HorizontalBreakdown
                             eyebrow={`COMMITTEE REPORTS · ${council.academic_period || "CURRENT PERIOD"}`}
                             title="Reporting by committee"
@@ -308,7 +394,6 @@ function AdminDashboard() {
                             }))}
                             emptyLabel="No committee reports have been submitted this academic period."
                             link={{ to: "/council", label: "Review governance" }}
-                            loading={loading}
                         />
                         <article className="admin-overview-chart-card admin-finance-summary">
                             <div className="admin-overview-chart-heading">
@@ -316,11 +401,11 @@ function AdminDashboard() {
                                 <Link to="/admin/finance">Open ledger</Link>
                             </div>
                             <div className="admin-finance-summary-grid">
-                                <div><span>Approved allocations</span><strong>{loading ? "—" : pesoFormat.format(Number(finance.approved_allocations || 0))}</strong></div>
-                                <div><span>Recorded expenses</span><strong>{loading ? "—" : pesoFormat.format(Number(finance.recorded_expenses || 0))}</strong></div>
-                                <div className="is-balance"><span>Cumulative balance</span><strong>{loading ? "—" : pesoFormat.format(Number(finance.available_balance || 0))}</strong></div>
+                                <div><span>Approved allocations</span><strong>{pesoFormat.format(Number(finance.approved_allocations || 0))}</strong></div>
+                                <div><span>Recorded expenses</span><strong>{pesoFormat.format(Number(finance.recorded_expenses || 0))}</strong></div>
+                                <div className="is-balance"><span>Cumulative balance</span><strong>{pesoFormat.format(Number(finance.available_balance || 0))}</strong></div>
                             </div>
-                            <p className="admin-finance-note">All periods. Proposed allocations ({loading ? "—" : pesoFormat.format(Number(finance.proposed_allocations || 0))}) and pending expenses ({loading ? "—" : pesoFormat.format(Number(finance.pending_expenses || 0))}) are excluded.</p>
+                            <p className="admin-finance-note">All periods. Proposed allocations ({pesoFormat.format(Number(finance.proposed_allocations || 0))}) and pending expenses ({pesoFormat.format(Number(finance.pending_expenses || 0))}) are excluded.</p>
                         </article>
                     </div>
                 </section>
@@ -330,7 +415,7 @@ function AdminDashboard() {
                         <div><span>WHAT'S NEXT · {displayNumber(eventData.upcoming_or_live)} UPCOMING OR LIVE</span><h2>Upcoming events</h2></div>
                         <Link to="/admin/events" className="admin-text-link">All events</Link>
                     </div>
-                    {loading ? <p className="admin-feedback" role="status">Loading event data…</p> : recentEvents.length ? (
+                    {recentEvents.length ? (
                         <div className="admin-upcoming-list">
                             {recentEvents.map((event) => (
                                 <article className="admin-upcoming-row" key={event.id}>
