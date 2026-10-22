@@ -66,6 +66,10 @@ export async function getPublicEvents() {
     return apiRequest("/events/list");
 }
 
+export async function getPublicEventUpdates() {
+    return apiRequest("/events/updates");
+}
+
 export async function getPreviousEvents() {
     return apiRequest("/events/previous");
 }

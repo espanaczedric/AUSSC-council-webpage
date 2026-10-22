@@ -138,6 +138,7 @@ function EventDetailsPage() {
                         <div className="event-actions">
 
                             {(event.display_status || event.status) !== "completed" &&
+                             (event.display_status || event.status) !== "cancelled" &&
                              event.status !== "cancelled" && (
 
                                 <Link

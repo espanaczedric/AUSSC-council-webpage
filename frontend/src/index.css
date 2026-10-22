@@ -4693,6 +4693,42 @@ select:focus-visible, textarea:focus-visible {
 .about-statement-card.is-vision p { color: #d0d9e5; }
 .about-statement-card.is-vision .about-statement-reference { color: #aebccd; }
 .about-constitution-note { grid-column: 1 / -1; margin: 0; color: #8792a2; font-size: .73rem; line-height: 1.5; }
+
+/* The Updates page is an announcement timeline; Events remains the complete catalog. */
+.events-updates-link { display: inline-flex; align-items: center; gap: 8px; margin-top: 13px; color: var(--brand-maroon); font-size: .86rem; font-weight: 750; }
+.events-updates-link span, .updates-hero-link span { color: #b77912; font-size: 1.1rem; }
+.updates-hero-link { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; color: #fff; font-size: .88rem; font-weight: 750; }
+.updates-hero-link:hover { color: var(--brand-gold); }
+.updates-hero-stamp { flex-basis: 132px; width: 132px; height: 132px; transform: rotate(-6deg); }
+.updates-hero-stamp span { font-size: 1.35rem; letter-spacing: .1em; }
+.updates-hero-stamp i { letter-spacing: .13em; }
+.updates-list-heading { margin-bottom: 18px; }
+.updates-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
+.updates-toolbar button { min-height: 40px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 999px; background: #fff; color: #48576b; font-size: .8rem; font-weight: 700; transition: background .16s ease,color .16s ease,border-color .16s ease; }
+.updates-toolbar button:hover, .updates-toolbar button.is-active { border-color: #e8c56a; background: #fff7e3; color: #77500a; }
+.updates-featured { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.1fr); overflow: hidden; margin: 0 0 26px; border: 1px solid var(--border); border-radius: 18px; background: #fff; box-shadow: var(--shadow-card); }
+.updates-featured-image { display: block; width: 100%; height: 100%; min-height: 310px; object-fit: cover; background: #eef2f6; }
+.updates-featured-copy { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; justify-content: center; padding: clamp(22px,4vw,38px); }
+.updates-featured-copy h3 { margin: 17px 0 8px; font-size: clamp(1.55rem,3vw,2.2rem); letter-spacing: -.035em; line-height: 1.12; }
+.updates-featured-copy > p { max-width: 610px; color: var(--muted); line-height: 1.7; }
+.updates-featured-copy .update-item-footer { width: 100%; align-items: flex-start; flex-direction: column; gap: 12px; }
+.update-type-pill { display: inline-flex; align-items: center; min-height: 26px; padding: 4px 9px; border-radius: 999px; background: #eef4fb; color: #26496d; font-size: .69rem; font-weight: 800; letter-spacing: .015em; }
+.update-type-pill.is-details_updated { background: #fff4d8; color: #79560c; }
+.update-type-pill.is-event_cancelled { background: #fff0ee; color: #a5382c; }
+.update-item-meta time { color: var(--muted); font-size: .78rem; }
+.updates-feed { border-top: 1px solid var(--border); }
+.updates-skeleton .ui-skeleton-row { min-height: 126px; }
+@media (max-width: 768px) {
+    .updates-featured { grid-template-columns: 1fr; }
+    .updates-featured-image { height: 230px; min-height: 230px; }
+    .updates-featured-copy { padding: 22px; }
+}
+@media (max-width: 480px) {
+    .events-updates-link { align-items: flex-start; }
+    .updates-toolbar { display: grid; grid-template-columns: 1fr; }
+    .updates-toolbar button { text-align: left; }
+    .updates-featured-image { height: 200px; min-height: 200px; }
+}
 @media (max-width: 680px) {
     .about-mission-vision { grid-template-columns: 1fr; gap: 12px; padding: 38px 0 14px; }
     .about-statement-card { min-height: 0; padding: 24px; }

@@ -82,8 +82,9 @@ function Events() {
             <main className="events-page">
                 <header className="events-header events-page-intro">
                     <span className="eyebrow">Campus calendar</span>
-                    <h1>Find your next campus moment.</h1>
-                    <p>Explore upcoming and live events, or revisit highlights from across our student community.</p>
+                    <h1>Browse campus events.</h1>
+                    <p>Search the full event catalog, filter by date status, and open an event to review details and registration.</p>
+                    <Link className="events-updates-link" to="/announcements">See recent council announcements <span aria-hidden="true">→</span></Link>
                 </header>
 
                 <section className="event-browser" aria-label="Browse events">

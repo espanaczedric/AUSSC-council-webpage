@@ -6,6 +6,7 @@ import AdminNav from "../components/AdminNav";
 import Navbar from "../components/Navbar";
 import { SkeletonBlock } from "../components/LoadingSkeletons";
 import { CameraScanner } from "../components/QRScanner";
+import { hasExecutiveAccess } from "../utils/workspaceAccess";
 import {
     checkInCouncilMember,
     getCouncilAttendancePass,
@@ -52,9 +53,14 @@ function emptyMeeting(period) {
     return { id: "", title: "", meeting_type: "regular", location: "", start_at: "", end_at: "", academic_period: period, mandatory: true, agenda: "", waive_quorum: false, quorum_waiver_rationale: "", status: "scheduled" };
 }
 
+function cachedUser() {
+    try { return JSON.parse(localStorage.getItem("user") || "null"); }
+    catch { return null; }
+}
+
 export default function CouncilGovernance() {
     const [period, setPeriod] = useState(academicPeriodNow);
-    const [data, setData] = useState({ meetings: [], members: [], attendance_stats: [], excuses: [], reports: [], inventory: [], summary: {} });
+    const [data, setData] = useState(() => ({ meetings: [], members: [], attendance_stats: [], excuses: [], reports: [], inventory: [], summary: {}, current_user: cachedUser() }));
     const [selectedId, setSelectedId] = useState("");
     const [tab, setTab] = useState("meetings");
     const [meetingForm, setMeetingForm] = useState(() => emptyMeeting(academicPeriodNow()));
@@ -215,7 +221,7 @@ export default function CouncilGovernance() {
         setManualPass("");
     }
 
-    const shell = isAdmin ? <AdminNav /> : <Navbar />;
+    const shell = hasExecutiveAccess(member) ? <AdminNav /> : <Navbar />;
     if (loading) return <>{shell}<main className="admin-page council-governance-page ui-governance-loading" aria-busy="true" aria-hidden="true"><header className="admin-header admin-page-heading"><div><SkeletonBlock className="workspace-skeleton-eyebrow" /><SkeletonBlock className="workspace-skeleton-title" /><SkeletonBlock className="workspace-skeleton-description" /></div></header><section className="council-governance-metrics">{Array.from({ length: 4 }, (_, index) => <article key={index}><SkeletonBlock className="workspace-skeleton-label" /><SkeletonBlock className="workspace-skeleton-number" /><SkeletonBlock className="workspace-skeleton-description" /></article>)}</section><div className="workspace-skeleton-panels"><section><SkeletonBlock className="workspace-skeleton-title is-small" />{Array.from({ length: 3 }, (_, index) => <div className="workspace-skeleton-item" key={index}><SkeletonBlock className="workspace-skeleton-label" /><SkeletonBlock className="workspace-skeleton-description" /></div>)}</section><section><SkeletonBlock className="workspace-skeleton-title is-small" /><SkeletonBlock className="workspace-skeleton-description" /><SkeletonBlock className="workspace-skeleton-description" /><SkeletonBlock className="workspace-skeleton-description is-short" /><SkeletonBlock className="workspace-skeleton-description" /></section></div></main><span className="sr-only" role="status">Loading council governance…</span></>;
     if (error && !data.current_user) return <>{shell}<main className="admin-page"><p className="admin-feedback is-error" role="alert">{error}</p><Link to="/profile">Back to profile</Link></main></>;
 

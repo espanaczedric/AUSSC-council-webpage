@@ -315,7 +315,7 @@ function parseDate(value) {
 }
 
 function displayStatus(event, now = new Date()) {
-    if (event.status === "cancelled") return "cancelled";
+    if (event.status === "cancelled" || event.publication_status === "cancelled") return "cancelled";
     if (event.start_date <= now && event.end_date >= now) return "ongoing";
     if (event.end_date < now) return "completed";
     return "upcoming";
@@ -701,6 +701,32 @@ app.get("/api/committees/media/:fileId", async (req, res, next) => {
 });
 
 // Public event discovery
+app.get("/api/events/updates", async (_req, res, next) => {
+    try {
+        const cutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
+        const updates = await collections.events.find({
+            $and: [
+                {
+                    $or: [
+                        { public_updated_at: { $gte: cutoff } },
+                        { public_updated_at: { $exists: false }, updated_at: { $gte: cutoff } },
+                        { public_updated_at: { $exists: false }, updated_at: { $exists: false }, created_at: { $gte: cutoff } },
+                        { public_updated_at: { $exists: false }, updated_at: { $exists: false }, publication_history: { $elemMatch: { decision: "approve", status: "published", at: { $gte: cutoff } } } }
+                    ]
+                },
+                {
+                    $or: [
+                        { publication_status: "published" },
+                        { publication_status: "cancelled" },
+                        { publication_status: { $exists: false } }
+                    ]
+                }
+            ]
+        }).sort({ public_updated_at: -1, updated_at: -1, created_at: -1 }).limit(50).toArray();
+        return ok(res, null, { updates: updates.map(withEventStatus) });
+    } catch (error) { return next(error); }
+});
+
 app.get("/api/events/list", async (_req, res, next) => {
     try {
         const events = await collections.events.find({ status: { $ne: "cancelled" }, ...publishedEventQuery() }).sort({ start_date: -1 }).toArray();
@@ -726,7 +752,7 @@ app.get("/api/events/event", async (req, res, next) => {
     const id = Number(req.query.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 422, "Event ID is required.");
     try {
-        const event = await collections.events.findOne({ id, status: { $ne: "cancelled" }, ...publishedEventQuery() });
+        const event = await collections.events.findOne({ id, $or: [{ publication_status: "published" }, { publication_status: { $exists: false } }, { publication_status: "cancelled" }] });
         if (!event) return fail(res, 404, "Event not found.");
         return ok(res, null, { event: withEventStatus(event) });
     } catch (error) { return next(error); }
@@ -1836,7 +1862,12 @@ app.post("/api/admin/events/update", adminOnly, imageMiddleware, async (req, res
         if (event.capacity < registrationCount) return fail(res, 422, "Capacity cannot be lower than the existing attendee count.");
         if (event.assignment_capacity > 0 && event.assignment_capacity < Number(existing.assignment_count || 0)) return fail(res, 422, "Assignment positions cannot be lower than the current number of sign-ups.");
         const cover = req.file ? await storeCover(req.file) : existing.cover_image;
-        await collections.events.updateOne({ id }, { $set: { ...event, cover_image: cover, registration_count: registrationCount } });
+        const now = new Date();
+        const isPublicUpdate = priorPublicationStatus === "published" && ["published", "cancelled"].includes(event.publication_status);
+        const publicUpdate = isPublicUpdate
+            ? { public_updated_at: now, public_update_type: event.publication_status === "cancelled" || event.status === "cancelled" ? "event_cancelled" : "details_updated" }
+            : {};
+        await collections.events.updateOne({ id }, { $set: { ...event, cover_image: cover, registration_count: registrationCount, updated_at: now, ...publicUpdate } });
         if (req.file && existing.cover_image !== cover) await removeLocalCover(existing.cover_image);
         return ok(res, "Event updated successfully.", { event_id: id });
     } catch (error) { return next(error); }
@@ -1848,7 +1879,11 @@ app.post("/api/admin/events/review", adminOnly, async (req, res, next) => {
     if (!Number.isInteger(id) || id < 1 || !["approve", "return"].includes(decision)) return fail(res, 422, "Choose a valid event approval decision.");
     try {
         const publicationStatus = decision === "approve" ? "published" : "draft";
-        const result = await collections.events.updateOne({ id, publication_status: "pending_approval" }, { $set: { publication_status: publicationStatus, reviewed_by: Number(req.session.userId), reviewed_at: new Date(), updated_at: new Date() }, $push: { publication_history: { status: publicationStatus, decision, reviewer_id: Number(req.session.userId), at: new Date() } } });
+        const reviewedAt = new Date();
+        const publicUpdate = decision === "approve"
+            ? { public_updated_at: reviewedAt, public_update_type: "newly_published" }
+            : {};
+        const result = await collections.events.updateOne({ id, publication_status: "pending_approval" }, { $set: { publication_status: publicationStatus, reviewed_by: Number(req.session.userId), reviewed_at: reviewedAt, updated_at: reviewedAt, ...publicUpdate }, $push: { publication_history: { status: publicationStatus, decision, reviewer_id: Number(req.session.userId), at: reviewedAt } } });
         if (!result.modifiedCount) return fail(res, 404, "This event is no longer awaiting approval.");
         return ok(res, decision === "approve" ? "Event published." : "Event returned to draft.");
     } catch (error) { return next(error); }
