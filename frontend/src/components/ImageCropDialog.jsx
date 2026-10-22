@@ -17,6 +17,7 @@ export default function ImageCropDialog({ file, kind, onCancel, onApply }) {
     const [zoom, setZoom] = useState(1);
     const [position, setPosition] = useState({ x: 0, y: 0 });
     const [processing, setProcessing] = useState(false);
+    const [processError, setProcessError] = useState("");
     const aspect = kind === "cover" ? COVER_ASPECT : 1;
     const isCover = kind === "cover";
     const title = isCover ? "Adjust cover photo" : "Adjust profile picture";
@@ -108,38 +109,45 @@ export default function ImageCropDialog({ file, kind, onCancel, onApply }) {
         }));
     }
 
-    function applyCrop() {
+    async function applyCrop() {
         const image = imageRef.current;
-        if (!image || !viewport.width || !viewport.height || !scale) return;
-        setProcessing(true);
-
-        const sourceX = clamp(((renderedWidth - viewport.width) / 2 - position.x) / scale, 0, imageSize.width);
-        const sourceY = clamp(((renderedHeight - viewport.height) / 2 - position.y) / scale, 0, imageSize.height);
-        const sourceWidth = Math.min(viewport.width / scale, imageSize.width - sourceX);
-        const sourceHeight = Math.min(viewport.height / scale, imageSize.height - sourceY);
-        const outputWidth = isCover ? 1600 : 720;
-        const outputHeight = Math.round(outputWidth / aspect);
-        const canvas = document.createElement("canvas");
-        canvas.width = outputWidth;
-        canvas.height = outputHeight;
-        const context = canvas.getContext("2d");
-
-        if (!context) {
-            setProcessing(false);
+        if (!image || !viewport.width || !viewport.height || !scale) {
+            setProcessError("The photo preview is still loading. Please wait a moment and try again.");
             return;
         }
-        context.imageSmoothingEnabled = true;
-        context.imageSmoothingQuality = "high";
-        context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, outputWidth, outputHeight);
-        canvas.toBlob((blob) => {
-            if (!blob) {
-                setProcessing(false);
-                return;
-            }
+        setProcessing(true);
+        setProcessError("");
+
+        try {
+            const sourceX = clamp(((renderedWidth - viewport.width) / 2 - position.x) / scale, 0, imageSize.width);
+            const sourceY = clamp(((renderedHeight - viewport.height) / 2 - position.y) / scale, 0, imageSize.height);
+            const sourceWidth = Math.min(viewport.width / scale, imageSize.width - sourceX);
+            const sourceHeight = Math.min(viewport.height / scale, imageSize.height - sourceY);
+            const outputWidth = isCover ? 1600 : 720;
+            const outputHeight = Math.round(outputWidth / aspect);
+            const canvas = document.createElement("canvas");
+            canvas.width = outputWidth;
+            canvas.height = outputHeight;
+            const context = canvas.getContext("2d");
+            if (!context) throw new Error("Your browser could not prepare this photo.");
+
+            context.imageSmoothingEnabled = true;
+            context.imageSmoothingQuality = "high";
+            context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, outputWidth, outputHeight);
+            const blob = await new Promise((resolve, reject) => {
+                if (typeof canvas.toBlob !== "function") {
+                    reject(new Error("Your browser cannot export the cropped photo. Try an updated browser."));
+                    return;
+                }
+                canvas.toBlob((result) => result ? resolve(result) : reject(new Error("The cropped photo could not be created. Please try again.")), "image/jpeg", 0.92);
+            });
             const baseName = file.name.replace(/\.[^.]+$/, "") || (isCover ? "cover-photo" : "profile-picture");
             const croppedFile = new File([blob], `${baseName}-cropped.jpg`, { type: "image/jpeg", lastModified: Date.now() });
-            onApply(kind, croppedFile);
-        }, "image/jpeg", 0.92);
+            await onApply(kind, croppedFile);
+        } catch (error) {
+            setProcessError(error.message || "Could not save this photo. Please try again.");
+            setProcessing(false);
+        }
     }
 
     return createPortal((
@@ -191,10 +199,13 @@ export default function ImageCropDialog({ file, kind, onCancel, onApply }) {
                     </div>
                 </div>
 
-                <footer className="profile-crop-actions">
+                {processing && <div className="profile-photo-saving-status" role="status"><span className="profile-saving-skeleton" aria-hidden="true" /><span>Saving photo to your profile…</span></div>}
+                {processError && <p className="profile-form-message is-error" role="alert">{processError}</p>}
+
+                <footer className="profile-crop-actions" aria-busy={processing}>
                     <button className="profile-cancel-button" type="button" onClick={onCancel} disabled={processing}>Cancel</button>
-                    <button className="admin-primary-action" type="button" onClick={applyCrop} disabled={!imageSize.width || processing}>
-                        {processing ? "Preparing photo…" : "Use this photo"}
+                    <button className="admin-primary-action" type="button" onClick={applyCrop} disabled={!imageSize.width || !viewport.width || processing}>
+                        {processing ? "Saving photo…" : "Use this photo"}
                     </button>
                 </footer>
             </section>

@@ -10,6 +10,67 @@ import {
     getPreviousEvents
 } from "../services/api";
 
+function HomeLoadingSkeleton() {
+    return (
+        <>
+            <Navbar />
+            <main className="home-loading-skeleton" aria-busy="true">
+                <section className="home-hero home-skeleton-hero" aria-hidden="true">
+                    <div className="home-hero-decoration" />
+                    <div className="home-hero-inner">
+                        <div className="home-hero-copy">
+                            <span className="home-skeleton-dark home-skeleton-eyebrow" />
+                            <div className="home-skeleton-title"><i /><i /></div>
+                            <div className="home-skeleton-paragraph"><i /><i /><i /></div>
+                            <div className="home-skeleton-actions"><i /><i /></div>
+                        </div>
+                        <article className="home-featured-event home-skeleton-featured">
+                            <div className="home-skeleton-feature-image" />
+                            <div className="home-featured-copy">
+                                <i className="home-skeleton-light home-skeleton-status" />
+                                <i className="home-skeleton-light home-skeleton-event-title" />
+                                <i className="home-skeleton-light home-skeleton-meta" />
+                                <i className="home-skeleton-light home-skeleton-link" />
+                            </div>
+                        </article>
+                    </div>
+                    <div className="home-hero-footer"><span /> <i className="home-skeleton-dark home-skeleton-footer" /></div>
+                </section>
+
+                <section className="council-intro" aria-hidden="true">
+                    <div className="council-intro-copy home-skeleton-intro-copy">
+                        <i className="home-skeleton-light home-skeleton-eyebrow" />
+                        <i className="home-skeleton-light home-skeleton-intro-title" />
+                        <i className="home-skeleton-light home-skeleton-intro-text" />
+                        <i className="home-skeleton-light home-skeleton-intro-text is-short" />
+                    </div>
+                    <div className="council-pillars home-skeleton-pillars">
+                        {Array.from({ length: 4 }, (_, index) => <div key={index}><i className="home-skeleton-light home-skeleton-pillar-title" /><i className="home-skeleton-light home-skeleton-pillar-text" /><i className="home-skeleton-light home-skeleton-pillar-text is-short" /></div>)}
+                    </div>
+                </section>
+
+                <section className="home-transparency-preview home-skeleton-transparency" aria-hidden="true">
+                    <i className="home-skeleton-light home-skeleton-mark" />
+                    <div><i className="home-skeleton-light home-skeleton-eyebrow" /><i className="home-skeleton-light home-skeleton-transparency-title" /><i className="home-skeleton-light home-skeleton-transparency-text" /></div>
+                    <i className="home-skeleton-light home-skeleton-transparency-link" />
+                </section>
+
+                <section className="previous-section home-skeleton-previous" aria-hidden="true">
+                    <div className="section-heading">
+                        <i className="home-skeleton-light home-skeleton-eyebrow" />
+                        <i className="home-skeleton-light home-skeleton-previous-title" />
+                        <i className="home-skeleton-light home-skeleton-previous-text" />
+                    </div>
+                    <div className="event-carousel">
+                        {Array.from({ length: 2 }, (_, index) => <article className="event-slide" key={index}><i className="home-skeleton-light home-skeleton-previous-image" /><div className="event-info"><i className="home-skeleton-light home-skeleton-meta" /><i className="home-skeleton-light home-skeleton-event-title" /><i className="home-skeleton-light home-skeleton-previous-text" /><i className="home-skeleton-light home-skeleton-link" /></div></article>)}
+                    </div>
+                </section>
+                <span className="sr-only" role="status">Loading the home page…</span>
+            </main>
+        </>
+    );
+}
+
 function Home() {
 
     const [upcoming, setUpcoming] =
@@ -66,15 +127,7 @@ function Home() {
     }, []);
 
 
-    if (loading) {
-
-        return (
-            <div className="loading">
-                Loading events...
-            </div>
-        );
-
-    }
+    if (loading) return <HomeLoadingSkeleton />;
 
 
     return (

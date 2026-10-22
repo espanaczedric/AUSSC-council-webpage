@@ -36,10 +36,13 @@ function formatDate(value) {
         : date.toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" });
 }
 
-function Avatar({ src, initials, className = "" }) {
-    return <span className={`profile-avatar-frame ${className}`}>
+function Avatar({ src, initials, className = "", saving = false }) {
+    const [loadedSrc, setLoadedSrc] = useState("");
+    const imageLoading = saving || (Boolean(src) && loadedSrc !== src);
+    return <span className={`profile-avatar-frame ${className}`} aria-busy={imageLoading || undefined}>
         <span aria-hidden="true">{initials}</span>
-        {src && <img src={src} alt="" crossOrigin={src.startsWith("blob:") ? undefined : "use-credentials"} onError={(event) => event.currentTarget.remove()} />}
+        {src && <img src={src} alt="" crossOrigin={src.startsWith("blob:") ? undefined : "use-credentials"} onLoad={() => setLoadedSrc(src)} onError={(event) => { setLoadedSrc(src); event.currentTarget.remove(); }} />}
+        {imageLoading && <span className="profile-avatar-skeleton" aria-hidden="true" />}
     </span>;
 }
 
@@ -50,15 +53,13 @@ export default function CouncilProfile() {
     const [loading, setLoading] = useState(true);
     const [editing, setEditing] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [photoSavingKind, setPhotoSavingKind] = useState("");
+    const [loadedCoverImage, setLoadedCoverImage] = useState("");
     const [connectionNote, setConnectionNote] = useState(false);
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
-    const [profileFile, setProfileFile] = useState(null);
-    const [coverFile, setCoverFile] = useState(null);
     const [removeProfile, setRemoveProfile] = useState(false);
     const [removeCover, setRemoveCover] = useState(false);
-    const [profilePreview, setProfilePreview] = useState("");
-    const [coverPreview, setCoverPreview] = useState("");
     const [cropRequest, setCropRequest] = useState(null);
 
     useEffect(() => {
@@ -93,31 +94,44 @@ export default function CouncilProfile() {
     }, [navigate]);
 
     useEffect(() => {
-        if (!profileFile) {
-            setProfilePreview("");
+        const source = user?.cover_photo ? getEventImageUrl(user.cover_photo) : "";
+        if (!source) {
+            setLoadedCoverImage("");
             return undefined;
         }
-        const url = URL.createObjectURL(profileFile);
-        setProfilePreview(url);
-        return () => URL.revokeObjectURL(url);
-    }, [profileFile]);
+        const image = new Image();
+        image.onload = () => setLoadedCoverImage(source);
+        image.onerror = () => setLoadedCoverImage(source);
+        image.src = source;
+        return () => { image.onload = null; image.onerror = null; };
+    }, [user?.cover_photo]);
 
-    useEffect(() => {
-        if (!coverFile) {
-            setCoverPreview("");
-            return undefined;
-        }
-        const url = URL.createObjectURL(coverFile);
-        setCoverPreview(url);
-        return () => URL.revokeObjectURL(url);
-    }, [coverFile]);
-
-    if (!user && loading) return <main className="loading" role="status">Loading your profile…</main>;
+    if (!user && loading) return <>
+        <Navbar />
+        <main className="council-profile-page profile-loading-skeleton" role="status" aria-label="Loading your profile">
+            <div className="profile-skeleton-heading">
+                <span className="profile-skeleton-block profile-skeleton-eyebrow" />
+                <span className="profile-skeleton-block profile-skeleton-title" />
+                <span className="profile-skeleton-block profile-skeleton-subtitle" />
+            </div>
+            <section className="council-profile-card" aria-hidden="true">
+                <div className="council-profile-banner" />
+                <div className="profile-skeleton-identity">
+                    <span className="profile-skeleton-block profile-skeleton-avatar" />
+                    <div><span className="profile-skeleton-block profile-skeleton-name" /><span className="profile-skeleton-block profile-skeleton-email" /></div>
+                </div>
+                <div className="profile-skeleton-details">
+                    {Array.from({ length: 6 }, (_, index) => <div key={index}><span className="profile-skeleton-block profile-skeleton-label" /><span className="profile-skeleton-block profile-skeleton-value" /></div>)}
+                </div>
+            </section>
+        </main>
+    </>;
     if (!user) return null;
 
     const initials = initialsFor(user);
-    const profileImage = profilePreview || (!removeProfile ? getEventImageUrl(user.profile_picture) : "");
-    const coverImage = coverPreview || (!removeCover ? getEventImageUrl(user.cover_photo) : "");
+    const profileImage = !removeProfile ? getEventImageUrl(user.profile_picture) : "";
+    const coverImage = !removeCover ? getEventImageUrl(user.cover_photo) : "";
+    const coverIsLoading = photoSavingKind === "cover" || (Boolean(coverImage) && loadedCoverImage !== coverImage);
     const accountDetails = [
         { label: "Student ID", value: user.student_id || "—" },
         { label: "Email address", value: user.email || "—" },
@@ -138,8 +152,6 @@ export default function CouncilProfile() {
 
     function beginEditing() {
         setForm({ ...blankForm, ...user });
-        setProfileFile(null);
-        setCoverFile(null);
         setRemoveProfile(false);
         setRemoveCover(false);
         setCropRequest(null);
@@ -151,8 +163,6 @@ export default function CouncilProfile() {
     function cancelEditing() {
         setEditing(false);
         setError("");
-        setProfileFile(null);
-        setCoverFile(null);
         setRemoveProfile(false);
         setRemoveCover(false);
         setCropRequest(null);
@@ -163,19 +173,12 @@ export default function CouncilProfile() {
         setSaving(true);
         setError("");
         setNotice("");
-        if ([profileFile, coverFile].some((file) => file && file.size > 5 * 1024 * 1024)) {
-            setError("Choose photos smaller than 5 MB each.");
-            setSaving(false);
-            return;
-        }
         const payload = new FormData();
         for (const field of ["first_name", "last_name", "student_id", "email", "course", "year_level"]) {
             payload.set(field, String(form[field] || "").trim());
         }
-        if (profileFile) payload.set("profile_picture", profileFile);
-        if (coverFile) payload.set("cover_photo", coverFile);
-        if (removeProfile && !profileFile) payload.set("remove_profile_picture", "true");
-        if (removeCover && !coverFile) payload.set("remove_cover_photo", "true");
+        if (removeProfile) payload.set("remove_profile_picture", "true");
+        if (removeCover) payload.set("remove_cover_photo", "true");
 
         try {
             const data = await updateMyProfile(payload);
@@ -184,8 +187,6 @@ export default function CouncilProfile() {
             localStorage.setItem("user", JSON.stringify(data.user));
             window.dispatchEvent(new Event("auth-change"));
             setEditing(false);
-            setProfileFile(null);
-            setCoverFile(null);
             setRemoveProfile(false);
             setRemoveCover(false);
             setNotice("Your profile has been updated.");
@@ -215,15 +216,36 @@ export default function CouncilProfile() {
         setCropRequest({ kind, file });
     }
 
-    function applyCroppedPhoto(kind, file) {
-        if (kind === "profile") {
-            setProfileFile(file);
-            setRemoveProfile(false);
-        } else {
-            setCoverFile(file);
-            setRemoveCover(false);
+    async function applyCroppedPhoto(kind, file) {
+        setSaving(true);
+        setPhotoSavingKind(kind);
+        setError("");
+        setNotice("");
+
+        // Save only this photo and leave unsaved text edits untouched.
+        const payload = new FormData();
+        for (const field of ["first_name", "last_name", "student_id", "email", "course", "year_level"]) {
+            payload.set(field, String(user[field] || "").trim());
         }
-        setCropRequest(null);
+        payload.set(kind === "profile" ? "profile_picture" : "cover_photo", file);
+
+        try {
+            const data = await updateMyProfile(payload);
+            setUser(data.user);
+            localStorage.setItem("user", JSON.stringify(data.user));
+            window.dispatchEvent(new Event("auth-change"));
+            if (kind === "profile") setRemoveProfile(false);
+            else setRemoveCover(false);
+            setCropRequest(null);
+            setNotice(`${kind === "profile" ? "Profile picture" : "Cover photo"} saved.`);
+            setConnectionNote(false);
+        } catch (requestError) {
+            setError(requestError.message || "Could not save the photo. Please try again.");
+            throw requestError;
+        } finally {
+            setSaving(false);
+            setPhotoSavingKind("");
+        }
     }
 
     return (
@@ -246,7 +268,7 @@ export default function CouncilProfile() {
                 <section className="council-profile-card" aria-label="Account profile">
                     <div className="council-profile-banner" style={coverImage ? { backgroundImage: `linear-gradient(90deg,rgba(5,19,35,.2),rgba(5,19,35,.05)),url("${coverImage}")` } : undefined} />
                     <div className="council-profile-identity">
-                        <Avatar src={profileImage} initials={initials} className="council-profile-avatar" />
+                        <Avatar src={profileImage} initials={initials} className="council-profile-avatar" saving={photoSavingKind === "profile"} />
                         <div className="council-profile-name">
                             <span className="council-profile-role">{councilPositionNames[user.council_position] || (user.role === "admin" ? "Council administrator" : "Student account")}</span>
                             <h2>{[user.first_name, user.last_name].filter(Boolean).join(" ") || "Council member"}</h2>
@@ -258,15 +280,15 @@ export default function CouncilProfile() {
                         <form className="profile-edit-form" onSubmit={saveProfile}>
                             {error && <p className="profile-form-message is-error" role="alert">{error}</p>}
                             <section className="profile-photo-edit-section" aria-labelledby="profile-photo-heading">
-                                <div><span className="profile-edit-eyebrow">PERSONALIZE YOUR PROFILE</span><h3 id="profile-photo-heading">Photos</h3><p>Choose a photo to crop and reposition it. Use JPG, PNG, or WebP up to 5 MB.</p></div>
+                                <div><span className="profile-edit-eyebrow">PERSONALIZE YOUR PROFILE</span><h3 id="profile-photo-heading">Photos</h3><p>Choose a photo to crop and reposition it. Use JPG, PNG, or WebP up to 5 MB. Saving a photo won’t submit your other profile edits.</p></div>
                                 <div className="profile-photo-edit-grid">
                                     <div className="profile-photo-control">
-                                        <Avatar src={profileImage} initials={initials} className="is-editing" />
-                                        <div><label htmlFor="profile-picture-upload">Profile picture</label><input id="profile-picture-upload" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => choosePhoto(event, "profile")} />{(user.profile_picture || profileFile) && <button type="button" className="profile-remove-photo" onClick={() => { setProfileFile(null); setRemoveProfile(true); }}>Remove picture</button>}</div>
+                                        <Avatar src={profileImage} initials={initials} className="is-editing" saving={photoSavingKind === "profile"} />
+                                        <div><label htmlFor="profile-picture-upload">Profile picture</label><input id="profile-picture-upload" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => choosePhoto(event, "profile")} />{user.profile_picture && !removeProfile && <button type="button" className="profile-remove-photo" onClick={() => setRemoveProfile(true)}>Remove picture</button>}</div>
                                     </div>
                                     <div className="profile-cover-control">
-                                        <div className="profile-cover-preview" style={coverImage ? { backgroundImage: `url("${coverImage}")` } : undefined}><span>Cover photo</span></div>
-                                        <label htmlFor="cover-photo-upload">Choose cover photo</label><input id="cover-photo-upload" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => choosePhoto(event, "cover")} />{(user.cover_photo || coverFile) && <button type="button" className="profile-remove-photo" onClick={() => { setCoverFile(null); setRemoveCover(true); }}>Remove cover</button>}
+                                        <div className={`profile-cover-preview${coverIsLoading ? " is-skeleton" : ""}`} style={coverImage ? { backgroundImage: `url("${coverImage}")` } : undefined} aria-busy={coverIsLoading || undefined}><span>Cover photo</span></div>
+                                        <label htmlFor="cover-photo-upload">Choose cover photo</label><input id="cover-photo-upload" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => choosePhoto(event, "cover")} />{user.cover_photo && !removeCover && <button type="button" className="profile-remove-photo" onClick={() => setRemoveCover(true)}>Remove cover</button>}
                                     </div>
                                 </div>
                             </section>
