@@ -6125,3 +6125,25 @@ canvas {
         max-height: calc(100dvh - 90px - env(safe-area-inset-bottom, 0px));
     }
 }
+
+@media (max-width: 700px) {
+    .admin-sidebar.is-open {
+        padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .admin-sidebar.is-open .admin-sidebar-link.is-active,
+    .admin-sidebar.is-open .admin-sidebar-link[aria-current="page"] {
+        background: transparent;
+        color: #c2cedc;
+    }
+
+    .admin-sidebar.is-open .admin-sidebar-link.is-active svg,
+    .admin-sidebar.is-open .admin-sidebar-link[aria-current="page"] svg {
+        color: #94a8bd;
+    }
+
+    .admin-mobile-dock.is-more-open .admin-mobile-dock-link[aria-current="page"] {
+        background: transparent;
+        color: #c1cedc;
+    }
+}

@@ -147,7 +147,7 @@ export default function AdminNav() {
                             to={link.to}
                             end={link.end}
                             onClick={closeMenu}
-                            className={({ isActive }) => `admin-sidebar-link${isActive || (isExecutive && link.label === "Committees" && isCommitteeWorkspaceRoute) ? " is-active" : ""}`}
+                            className={({ isActive }) => `admin-sidebar-link${!menuOpen && (isActive || (isExecutive && link.label === "Committees" && isCommitteeWorkspaceRoute)) ? " is-active" : ""}`}
                         >
                             <AdminNavIcon name={link.icon} />
                             <span>{link.label}</span>
@@ -194,12 +194,12 @@ export default function AdminNav() {
                 </div>
             </header>
 
-            <nav className="admin-mobile-dock" aria-label="Workspace destinations">
+            <nav className={`admin-mobile-dock${menuOpen ? " is-more-open" : ""}`} aria-label="Workspace destinations">
                 {mobileDockLinks.map((link) => <NavLink
                     key={link.to}
                     to={link.to}
                     end={link.end}
-                    className={({ isActive }) => `admin-mobile-dock-link${isActive || (link.committee && isCommitteeWorkspaceRoute) ? " is-active" : ""}`}
+                    className={({ isActive }) => `admin-mobile-dock-link${!menuOpen && (isActive || (link.committee && isCommitteeWorkspaceRoute)) ? " is-active" : ""}`}
                     onClick={closeMenu}
                 >
                     <AdminNavIcon name={link.icon} />
