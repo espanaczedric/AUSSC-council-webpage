@@ -49,7 +49,8 @@ function NavigationIcon({ name }) {
         updates: <><path d="M4 11v2a2 2 0 0 0 2 2h2l8 5V4l-8 5H6a2 2 0 0 0-2 2Z" /><path d="m8 15 2 6M19 9l2-2M19 15l2 2" /></>,
         committees: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="10" cy="7" r="4" /><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
         transparency: <><path d="M4 19h16" /><path d="M7 15v-4M12 15V5M17 15V9" /><path d="M5 5h2M16 5h3" /></>,
-        about: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></>
+        about: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></>,
+        more: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>
     };
 
     return <svg {...shared}>{paths[name]}</svg>;
@@ -86,10 +87,26 @@ function Navbar() {
     const navRef = useRef(null);
     const dropdownRef = useRef(null);
     const avatarRef = useRef(null);
+    const mobileMoreButtonRef = useRef(null);
+    const mobileMoreMenuRef = useRef(null);
     const lastScrollPositionRef = useRef(0);
     const canReceiveNotifications = Boolean(user && (
         hasExecutiveAccess(user) || user.committee_assignment || user.council_position
     ));
+    const mobileMoreIsCurrent = !(
+        location.pathname === "/" ||
+        location.pathname === "/events" ||
+        location.pathname.startsWith("/events/") ||
+        location.pathname === "/announcements" ||
+        location.pathname === "/committees"
+    );
+    const workspaceLink = hasExecutiveAccess(user)
+        ? { to: "/admin", label: "Executive workspace" }
+        : user?.committee_assignment
+            ? { to: getCommitteeWorkspacePath(user), label: `${committeeLabels[user.committee_assignment]?.replace(" Committee", "") || "Committee"} workspace` }
+            : user
+                ? { to: "/my-events", label: "My registrations" }
+                : null;
 
     useEffect(() => {
         setMenuOpen(false);
@@ -106,7 +123,7 @@ function Navbar() {
             const activeElement = document.activeElement;
             const navigationHasFocus = navRef.current?.contains(activeElement);
 
-            if (menuOpen || dropdownOpen || navigationHasFocus || currentPosition < 36) {
+            if (window.matchMedia("(max-width: 700px)").matches || menuOpen || dropdownOpen || navigationHasFocus || currentPosition < 36) {
                 setIsHidden(false);
             } else if (Math.abs(currentPosition - previousPosition) > 7) {
                 setIsHidden(currentPosition > previousPosition && currentPosition > 105);
@@ -164,7 +181,12 @@ function Navbar() {
         if (!menuOpen) return undefined;
 
         function handlePointerDown(event) {
-            if (navRef.current && !navRef.current.contains(event.target)) {
+            if (
+                !navRef.current?.contains(event.target) &&
+                !mobileMoreMenuRef.current?.contains(event.target) &&
+                !mobileMoreButtonRef.current?.contains(event.target) &&
+                !menuButtonRef.current?.contains(event.target)
+            ) {
                 setMenuOpen(false);
                 setDropdownOpen(false);
                 setDetailsVisible(false);
@@ -176,7 +198,11 @@ function Navbar() {
                 setMenuOpen(false);
                 setDropdownOpen(false);
                 setDetailsVisible(false);
-                menuButtonRef.current?.focus();
+                if (mobileMoreButtonRef.current && window.matchMedia("(max-width: 700px)").matches) {
+                    mobileMoreButtonRef.current.focus();
+                } else {
+                    menuButtonRef.current?.focus();
+                }
             }
         }
 
@@ -512,6 +538,65 @@ function Navbar() {
 
             </div>
         </nav>
+
+        <nav className="public-mobile-dock" aria-label="Main destinations">
+            <NavLink to="/" end className="public-mobile-dock-link">
+                <NavigationIcon name="home" />
+                <span>Home</span>
+            </NavLink>
+            <NavLink to="/events" className="public-mobile-dock-link">
+                <NavigationIcon name="events" />
+                <span>Events</span>
+            </NavLink>
+            <NavLink to="/announcements" className="public-mobile-dock-link">
+                <NavigationIcon name="updates" />
+                <span>Updates</span>
+            </NavLink>
+            <NavLink to="/committees" className="public-mobile-dock-link">
+                <NavigationIcon name="committees" />
+                <span>Committees</span>
+            </NavLink>
+            <button
+                ref={mobileMoreButtonRef}
+                className={`public-mobile-dock-link public-mobile-dock-more${menuOpen || mobileMoreIsCurrent ? " is-active" : ""}`}
+                type="button"
+                aria-label={menuOpen ? "Close more destinations" : "Open more destinations"}
+                aria-expanded={menuOpen}
+                aria-controls="public-mobile-more-menu"
+                onClick={() => {
+                    setMenuOpen((open) => !open);
+                    setDropdownOpen(false);
+                    setDetailsVisible(false);
+                }}
+            >
+                <NavigationIcon name="more" />
+                <span>More</span>
+            </button>
+        </nav>
+
+        {menuOpen && <div className="public-mobile-more-scrim" onClick={() => setMenuOpen(false)}>
+            <section
+                ref={mobileMoreMenuRef}
+                className="public-mobile-more-sheet"
+                id="public-mobile-more-menu"
+                aria-label="More council destinations"
+                onClick={(event) => event.stopPropagation()}
+            >
+                <div className="public-mobile-more-heading">
+                    <div><span>COUNCIL WEBSITE</span><strong>More destinations</strong></div>
+                    <button type="button" aria-label="Close more destinations" onClick={() => setMenuOpen(false)}>×</button>
+                </div>
+                <div className="public-mobile-more-links">
+                    <NavLink to="/transparency" onClick={() => setMenuOpen(false)}><NavigationIcon name="transparency" /><span><strong>Transparency</strong><small>Budgets and published reports</small></span><b aria-hidden="true">›</b></NavLink>
+                    <NavLink to="/about" onClick={() => setMenuOpen(false)}><NavigationIcon name="about" /><span><strong>About the Council</strong><small>Mission, vision, and mandate</small></span><b aria-hidden="true">›</b></NavLink>
+                    {user?.council_position && <NavLink to="/council" onClick={() => setMenuOpen(false)}><NavigationIcon name="committees" /><span><strong>Council governance</strong><small>Meetings, records, and oversight</small></span><b aria-hidden="true">›</b></NavLink>}
+                    {workspaceLink && <Link to={workspaceLink.to} onClick={() => setMenuOpen(false)}><NavigationIcon name="committees" /><span><strong>{workspaceLink.label}</strong><small>Open your council workspace</small></span><b aria-hidden="true">›</b></Link>}
+                    {user && <Link to="/profile" onClick={() => setMenuOpen(false)}><AccountIcon /><span><strong>My profile</strong><small>View and update your account</small></span><b aria-hidden="true">›</b></Link>}
+                    {!user && <Link to="/login" onClick={() => setMenuOpen(false)}><AccountIcon /><span><strong>Sign in</strong><small>Access your student account</small></span><b aria-hidden="true">›</b></Link>}
+                    {!user && <Link to="/register-account" onClick={() => setMenuOpen(false)}><AccountIcon /><span><strong>Create a student account</strong><small>Register with your PHINMA Education email</small></span><b aria-hidden="true">›</b></Link>}
+                </div>
+            </section>
+        </div>}
         </>
     );
 }

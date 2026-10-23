@@ -34,7 +34,10 @@ function AdminNavIcon({ name }) {
         registrations: <><path d="M8 4h10a2 2 0 0 1 2 2v14H6V6a2 2 0 0 1 2-2Z" /><path d="M9 9h7M9 13h7M9 17h4M4 7v13" /></>,
         attendance: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><path d="M14 14h3v3h-3zM20 14v2M17 20h4M20 19v2" /></>,
         people: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 5a3.5 3.5 0 0 1 0 6.8M18 14a5.5 5.5 0 0 1 3.5 5" /></>,
-        highlights: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m4 18 5-5 4 4 3-3 4 4" /></>
+        highlights: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m4 18 5-5 4 4 3-3 4 4" /></>,
+        home: <><path d="m3 10 9-7 9 7" /><path d="M5 9v11h14V9" /><path d="M9 20v-6h6v6" /></>,
+        more: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>,
+        profile: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>
     };
     return <svg {...common}>{paths[name]}</svg>;
 }
@@ -47,6 +50,7 @@ export default function AdminNav() {
     const [menuOpen, setMenuOpen] = useState(false);
     const asideRef = useRef(null);
     const toggleRef = useRef(null);
+    const dockMoreRef = useRef(null);
     const location = useLocation();
     const navigate = useNavigate();
     const [signingOut, setSigningOut] = useState(false);
@@ -66,6 +70,17 @@ export default function AdminNav() {
         ? [{ label: committeeLabels[user.committee_assignment] || "Committee workspace", to: `/admin/committees/${user.committee_assignment}`, icon: "people" }]
         : [];
     const visibleLinks = isExecutive ? links : committeeLink;
+    const mobileDockLinks = isExecutive ? [
+        { label: "Overview", to: "/admin", end: true, icon: "overview" },
+        { label: "Events", to: "/admin/events", icon: "events" },
+        { label: "Attendance", to: "/admin/attendance", icon: "attendance" },
+        { label: "Committees", to: "/admin/committees/executive", icon: "people", committee: true }
+    ] : [
+        committeeLink[0] || (user?.council_position ? { label: "Governance", to: "/council", end: true, icon: "people" } : null),
+        { label: "My events", to: "/my-events", icon: "events" },
+        { label: "Profile", to: "/profile", end: true, icon: "profile" },
+        { label: "Public site", to: "/", end: true, icon: "home" }
+    ].filter(Boolean);
     const isCommitteeWorkspaceRoute = location.pathname.startsWith("/admin/committees/");
     const current = visibleLinks.find((link) => (link.end
         ? location.pathname === link.to
@@ -80,14 +95,18 @@ export default function AdminNav() {
     useEffect(() => {
         if (!menuOpen) return undefined;
         function onPointerDown(event) {
-            if (!asideRef.current?.contains(event.target) && !toggleRef.current?.contains(event.target)) {
+            if (
+                !asideRef.current?.contains(event.target) &&
+                !toggleRef.current?.contains(event.target) &&
+                !dockMoreRef.current?.contains(event.target)
+            ) {
                 setMenuOpen(false);
             }
         }
         function onKeyDown(event) {
             if (event.key === "Escape") {
                 setMenuOpen(false);
-                toggleRef.current?.focus();
+                (window.matchMedia("(max-width: 700px)").matches ? dockMoreRef.current : toggleRef.current)?.focus();
             }
         }
         document.addEventListener("pointerdown", onPointerDown);
@@ -174,6 +193,31 @@ export default function AdminNav() {
                     </button>
                 </div>
             </header>
+
+            <nav className="admin-mobile-dock" aria-label="Workspace destinations">
+                {mobileDockLinks.map((link) => <NavLink
+                    key={link.to}
+                    to={link.to}
+                    end={link.end}
+                    className={({ isActive }) => `admin-mobile-dock-link${isActive || (link.committee && isCommitteeWorkspaceRoute) ? " is-active" : ""}`}
+                    onClick={closeMenu}
+                >
+                    <AdminNavIcon name={link.icon} />
+                    <span>{link.label}</span>
+                </NavLink>)}
+                <button
+                    ref={dockMoreRef}
+                    type="button"
+                    className={`admin-mobile-dock-link admin-mobile-dock-more${menuOpen ? " is-active" : ""}`}
+                    aria-label={menuOpen ? "Close workspace navigation" : "Open more workspace destinations"}
+                    aria-expanded={menuOpen}
+                    aria-controls="admin-navigation"
+                    onClick={() => setMenuOpen((open) => !open)}
+                >
+                    <AdminNavIcon name="more" />
+                    <span>More</span>
+                </button>
+            </nav>
         </>
     );
 }
