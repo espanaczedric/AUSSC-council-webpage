@@ -40,10 +40,15 @@ export async function apiRequest(path, options = {}) {
         headers
     });
 
-    const data = await response.json().catch(() => ({
-        success: false,
-        message: "Invalid JSON response from the server."
-    }));
+    let data;
+    try {
+        data = await response.json();
+    } catch {
+        const error = new Error(`The API returned a non-JSON response for ${path} (HTTP ${response.status}). Restart the backend or redeploy it so this endpoint is available.`);
+        error.status = response.status;
+        error.code = "API_NON_JSON_RESPONSE";
+        throw error;
+    }
 
     if (!response.ok) {
         const message = data.message || "Request failed.";
@@ -225,6 +230,50 @@ export async function deleteCommitteeWork(id) {
 
 export async function updateCommitteeChecklist(id, label, done) {
     return apiRequest("/admin/committee-work/checklist", { method: "POST", credentials: "include", body: JSON.stringify({ id, label, done }) });
+}
+
+export async function getAdminPublicationTasks() {
+    return apiRequest("/admin/publication/tasks", { credentials: "include" });
+}
+
+export async function getMyPublicationTasks() {
+    return apiRequest("/publication/tasks/mine", { credentials: "include" });
+}
+
+export async function updateMyPublicationTaskProgress(id, status) {
+    return apiRequest("/publication/tasks/progress", { method: "POST", credentials: "include", body: JSON.stringify({ id, status }) });
+}
+
+export async function submitPublicationTask(formData) {
+    return apiRequest("/publication/tasks/submit", { method: "POST", credentials: "include", body: formData });
+}
+
+export async function reviewPublicationTask(id, decision, note = "") {
+    return apiRequest("/admin/publication/tasks/review", { method: "POST", credentials: "include", body: JSON.stringify({ id, decision, note }) });
+}
+
+export async function recordPublicationPost(id, postedAt = "", publishedUrl = "") {
+    return apiRequest("/admin/publication/tasks/post", { method: "POST", credentials: "include", body: JSON.stringify({ id, posted_at: postedAt, published_url: publishedUrl }) });
+}
+
+export async function archivePublicationTask(id) {
+    return apiRequest("/admin/publication/tasks/archive", { method: "POST", credentials: "include", body: JSON.stringify({ id }) });
+}
+
+export async function cancelPublicationTask(id) {
+    return apiRequest("/admin/publication/tasks/cancel", { method: "POST", credentials: "include", body: JSON.stringify({ id }) });
+}
+
+export async function getMyNotifications() {
+    return apiRequest("/notifications", { credentials: "include" });
+}
+
+export async function markNotificationRead(id) {
+    return apiRequest("/notifications/read", { method: "POST", credentials: "include", body: JSON.stringify({ id }) });
+}
+
+export async function markAllNotificationsRead() {
+    return apiRequest("/notifications/read-all", { method: "POST", credentials: "include", body: JSON.stringify({}) });
 }
 
 export async function reviewEventAssignment(id, status) {

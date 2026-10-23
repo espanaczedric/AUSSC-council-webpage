@@ -44,3 +44,9 @@ Event covers and profile media use MongoDB GridFS on Vercel so uploads persist a
 For Atlas connectivity, allow the **Vercel Function's outbound IP** in Atlas Network Access and allow outbound TCP traffic on ports `27015`–`27017`. Vercel's normal function egress uses changing IP addresses; Vercel Static IPs are available on Pro and Enterprise plans. Configure static egress for the project and add its assigned addresses to Atlas. Adding a developer's laptop IP does not authorize a deployed function unless it exits through that same address. Avoid opening Atlas to every IP as a workaround.
 
 For a new database, create the first administrator using the local `create:admin` command above with the production MongoDB database selected. Do not add `ADMIN_PASSWORD` to Vercel; it is only used by that one-time local command.
+
+## Publication Committee workflow
+
+Publication tasks live in the shared `committee_work_items` collection (`committee: "publication"`, `kind: "pubmat"`) with task briefs, deliverables, event, designer, submission deadline, scheduled post date, status, revision history, and submission records. Executive Committee members create and assign tasks, review submissions, request revisions, approve designs, and record the actual posting time. Publication members see only their own assignments and can submit links, notes, or a file; they cannot assign, edit, or review work.
+
+Task attachments are stored privately in the `committee_submissions` GridFS bucket and are served only to the assigned member or Executive Committee. JPG, PNG, WebP, MP4, WebM, and MOV files are accepted up to 4 MB. Notifications are persisted per account in `notifications`; deadline reminders are deduplicated and generated when the inbox is opened. The dashboard calculates submission timeliness from the deadline captured at first submission and posting timeliness from the scheduled and actual publication timestamps. Rates exclude cancelled work and future deadlines.

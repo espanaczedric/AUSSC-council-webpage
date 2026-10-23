@@ -10,6 +10,7 @@ import session from "express-session";
 import { GridFSBucket, MongoClient, ObjectId } from "mongodb";
 import multer from "multer";
 import { fileTypeFromBuffer } from "file-type";
+import { summarizePublicationPerformance } from "./publicationWorkflow.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "../..");
@@ -32,6 +33,7 @@ let db;
 let collections;
 let eventCovers;
 let profileMedia;
+let committeeSubmissionFiles;
 let databaseReady = false;
 let databaseConnectionPromise;
 const passwordResetIpWindows = new Map();
@@ -1308,8 +1310,345 @@ app.post("/api/council/attendance/checkin", councilAccess(["governor", "vice_gov
 });
 
 // Shared committee work items provide one source of truth for publication, production and program workflows.
-const workStatuses = new Set(["Request Submitted", "Requirements Review", "Assigned", "In Design", "Internal Review", "Revisions Requested", "Awaiting Approval", "Approved", "Scheduled", "Published", "Archived", "Not Started", "In Progress", "Blocked", "Complete"]);
+const workStatuses = new Set(["Request Submitted", "Requirements Review", "Assigned", "In Design", "Internal Review", "Revisions Requested", "Awaiting Approval", "Approved", "Scheduled", "Published", "Archived", "Not Started", "In Progress", "Submitted for Review", "Revision Requested", "Posted", "Cancelled", "Blocked", "Complete"]);
 const workCommittees = new Set(["executive", "publication", "production", "program"]);
+
+
+const publicationSubmissionUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024, files: 1 } });
+const publicationSubmissionMiddleware = (req, res, next) => publicationSubmissionUpload.single("attachment")(req, res, (error) => {
+    if (error) return fail(res, 422, "Attachments must be smaller than 4 MB.");
+    next();
+});
+const publicationFileTypes = new Set(["image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm", "video/quicktime"]);
+
+async function createNotification(userId, { kind, title, message, taskId = null, dedupeKey }) {
+    if (!Number.isInteger(Number(userId)) || !dedupeKey) return;
+    const id = await nextId("notifications");
+    await collections.notifications.updateOne(
+        { user_id: Number(userId), dedupe_key: dedupeKey },
+        { $setOnInsert: { id, user_id: Number(userId), kind, title, message, task_id: taskId, href: taskId ? `/admin/committees/publication?task=${taskId}` : null, dedupe_key: dedupeKey, created_at: new Date(), read_at: null } },
+        { upsert: true }
+    );
+}
+
+async function notifyPublicationExecutives(kind, title, message, taskId, dedupeKey) {
+    const executives = await collections.users.find({ $or: [
+        { role: "admin" },
+        { committee_assignment: "executive" },
+        { council_position: { $in: [...executiveCouncilPositions] } }
+    ] }, { projection: { id: 1 } }).toArray();
+    await Promise.all(executives.map((user) => createNotification(user.id, { kind, title, message, taskId, dedupeKey: `${dedupeKey}:${user.id}` })));
+}
+
+async function createPublicationDeadlineNotices(userId) {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const tasks = await collections.committeeWorkItems.find({
+        committee: "publication", kind: "pubmat", assignee_user_id: Number(userId), submissions: { $in: [null, []] },
+        status: { $nin: ["Cancelled", "Posted", "Approved", "Published", "Archived"] },
+        due_at: { $lte: cutoff }
+    }, { projection: { id: 1, title: 1, due_at: 1 } }).limit(100).toArray();
+    for (const task of tasks) {
+        const due = task.due_at instanceof Date ? task.due_at : new Date(task.due_at);
+        if (Number.isNaN(due.getTime())) continue;
+        const overdue = due <= now;
+        await createNotification(userId, {
+            kind: overdue ? "task_overdue" : "deadline_reminder",
+            title: overdue ? "Publication task overdue" : "Publication deadline approaching",
+            message: overdue ? `${task.title} is past its deadline.` : `${task.title} is due within 24 hours.`,
+            taskId: task.id,
+            dedupeKey: `publication:${task.id}:${overdue ? "overdue" : "reminder"}:${due.getTime()}`
+        });
+    }
+}
+
+function withSubmissionLinks(task) {
+    return {
+        ...task,
+        submissions: (task.submissions || []).map((submission) => ({
+            ...submission,
+            attachment_url: submission.attachment_file_id
+                ? `/api/publication/tasks/${task.id}/submissions/${submission.version}/attachment`
+                : ""
+        }))
+    };
+}
+
+function revisionFilter(item) {
+    const filter = { id: item.id };
+    if (Object.prototype.hasOwnProperty.call(item, "revision")) filter.revision = item.revision;
+    else filter.revision = { $exists: false };
+    return filter;
+}
+
+function publicationTaskId(value) {
+    const id = Number(value);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+async function storePublicationAttachment(file, taskId, userId, version) {
+    if (!file) return null;
+    const type = await fileTypeFromBuffer(file.buffer);
+    if (!type || !publicationFileTypes.has(type.mime)) {
+        throw new Error("Use a JPG, PNG, WebP, MP4, WebM, or MOV attachment.");
+    }
+    const id = new ObjectId();
+    await new Promise((resolve, reject) => {
+        const stream = committeeSubmissionFiles.openUploadStreamWithId(id, `submission-${taskId}-${version}-${id.toHexString()}`, {
+            contentType: type.mime,
+            metadata: { task_id: taskId, owner_user_id: userId, version }
+        });
+        stream.once("error", reject);
+        stream.once("finish", resolve);
+        stream.end(file.buffer);
+    });
+    return { id: id.toHexString(), content_type: type.mime, file_name: text(file.originalname).slice(0, 180), size: file.size };
+}
+
+app.get("/api/notifications", signedIn, async (req, res, next) => {
+    const userId = Number(req.session.userId);
+    try {
+        await createPublicationDeadlineNotices(userId);
+        const [notifications, unreadCount] = await Promise.all([
+            collections.notifications.find({ user_id: userId }).sort({ created_at: -1 }).limit(50).toArray(),
+            collections.notifications.countDocuments({ user_id: userId, read_at: null })
+        ]);
+        return ok(res, null, { notifications, unread_count: unreadCount });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/notifications/read", signedIn, async (req, res, next) => {
+    const id = publicationTaskId(req.body.id);
+    if (!id) return fail(res, 422, "Choose a valid notification.");
+    try {
+        const result = await collections.notifications.updateOne({ id, user_id: Number(req.session.userId), read_at: null }, { $set: { read_at: new Date() } });
+        return ok(res, result.matchedCount ? "Notification marked as read." : "Notification is already read.");
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/notifications/read-all", signedIn, async (req, res, next) => {
+    try {
+        await collections.notifications.updateMany({ user_id: Number(req.session.userId), read_at: null }, { $set: { read_at: new Date() } });
+        return ok(res, "Notifications marked as read.");
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/publication/tasks/mine", signedIn, async (req, res, next) => {
+    const userId = Number(req.session.userId);
+    try {
+        const user = await collections.users.findOne({ id: userId }, { projection: { id: 1, committee_assignment: 1 } });
+        if (!user || (user.committee_assignment !== "publication" && !hasExecutiveAccess(user))) return fail(res, 403, "Publication Committee access is required.");
+        const tasks = await collections.committeeWorkItems.find({ committee: "publication", kind: "pubmat", assignee_user_id: userId })
+            .sort({ due_at: 1, updated_at: -1 }).limit(200).toArray();
+        const eventIds = [...new Set(tasks.map((task) => task.event_id).filter(Boolean))];
+        const events = eventIds.length ? await collections.events.find({ id: { $in: eventIds } }, { projection: { id: 1, title: 1 } }).toArray() : [];
+        const eventMap = new Map(events.map((event) => [event.id, event.title]));
+        const normalized = tasks.map((task) => withSubmissionLinks({ ...task, event_title: eventMap.get(task.event_id) || "Council-wide" }));
+        return ok(res, null, { tasks: normalized, performance: summarizePublicationPerformance(tasks) });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/admin/publication/tasks", adminOnly, async (_req, res, next) => {
+    try {
+        const tasks = await collections.committeeWorkItems.find({ committee: "publication", kind: "pubmat" }).sort({ due_at: 1, updated_at: -1 }).limit(500).toArray();
+        const ids = [...new Set(tasks.map((task) => task.assignee_user_id).filter(Boolean))];
+        const eventIds = [...new Set(tasks.map((task) => task.event_id).filter(Boolean))];
+        const [members, events] = await Promise.all([
+            collections.users.find({ committee_assignment: "publication" }, { projection: { id: 1, first_name: 1, last_name: 1, email: 1, student_id: 1 } }).sort({ first_name: 1, last_name: 1 }).toArray(),
+            eventIds.length ? collections.events.find({ id: { $in: eventIds } }, { projection: { id: 1, title: 1 } }).toArray() : []
+        ]);
+        const memberMap = new Map(members.map((member) => [member.id, member]));
+        const eventMap = new Map(events.map((event) => [event.id, event.title]));
+        const enriched = tasks.map((task) => withSubmissionLinks({
+            ...task,
+            event_title: eventMap.get(task.event_id) || "Council-wide",
+            assignee: memberMap.get(task.assignee_user_id) || null,
+            assignee_name: memberMap.has(task.assignee_user_id) ? `${memberMap.get(task.assignee_user_id).first_name || ""} ${memberMap.get(task.assignee_user_id).last_name || ""}`.trim() : "Unassigned"
+        }));
+        const byMember = new Map();
+        for (const task of tasks.filter((item) => item.assignee_user_id)) {
+            if (!byMember.has(task.assignee_user_id)) byMember.set(task.assignee_user_id, []);
+            byMember.get(task.assignee_user_id).push(task);
+        }
+        const performanceByMember = members.map((member) => ({
+            user: member,
+            performance: summarizePublicationPerformance(byMember.get(member.id) || [])
+        }));
+        return ok(res, null, { tasks: enriched, metrics: summarizePublicationPerformance(tasks), members, performance_by_member: performanceByMember });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/publication/tasks/progress", signedIn, async (req, res, next) => {
+    const id = publicationTaskId(req.body.id);
+    if (!id) return fail(res, 422, "Choose a valid publication task.");
+    try {
+        const userId = Number(req.session.userId);
+        const item = await collections.committeeWorkItems.findOne({ id, committee: "publication", kind: "pubmat", assignee_user_id: userId });
+        if (!item) return fail(res, 404, "Assigned publication task not found.");
+        if (["Assigned", "Not Started"].includes(item.status) && ["In Design", "In Progress"].includes(req.body.status)) {
+            const now = new Date();
+            const updated = await collections.committeeWorkItems.updateOne(revisionFilter(item), { $set: { status: "In Design", updated_at: now }, $push: { activity: { at: now, actor_id: userId, status: "In Design" } }, $inc: { revision: 1 } });
+            if (!updated.modifiedCount) return fail(res, 409, "This task changed. Refresh and try again.");
+        } else if (!["In Design", "In Progress", "Revisions Requested", "Revision Requested"].includes(item.status)) {
+            return fail(res, 422, "This task cannot be changed at its current review stage.");
+        }
+        return ok(res, "Task progress updated.");
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/publication/tasks/submit", signedIn, publicationSubmissionMiddleware, async (req, res, next) => {
+    const id = publicationTaskId(req.body.id);
+    const projectUrl = text(req.body.project_url).trim();
+    const notes = text(req.body.notes).trim();
+    if (!id || notes.length > 2000 || (projectUrl && (!/^https:\/\//i.test(projectUrl) || projectUrl.length > 1200))) return fail(res, 422, "Enter a valid task, HTTPS project link, and notes under 2,000 characters.");
+    if (!projectUrl && !req.file) return fail(res, 422, "Add a project link or attach a file.");
+    try {
+        const userId = Number(req.session.userId);
+        const item = await collections.committeeWorkItems.findOne({ id, committee: "publication", kind: "pubmat", assignee_user_id: userId });
+        if (!item) return fail(res, 404, "Assigned publication task not found.");
+        const submittableStatuses = ["Not Started", "In Progress", "Revision Requested", "Request Submitted", "Requirements Review", "Assigned", "In Design", "Internal Review", "Revisions Requested", "Awaiting Approval"];
+        const legacyReviewStageWithoutSubmission = ["Internal Review", "Awaiting Approval"].includes(item.status) && !(item.submissions || []).length;
+        if (!submittableStatuses.includes(item.status) || (["Internal Review", "Awaiting Approval"].includes(item.status) && !legacyReviewStageWithoutSubmission)) return fail(res, 409, "This task is not accepting a submission at its current status.");
+        const version = (item.submissions || []).length + 1;
+        const attachment = req.file ? await storePublicationAttachment(req.file, id, userId, version) : null;
+        const now = new Date();
+        const submission = {
+            version, submitted_by: userId, submitted_at: now, deadline_snapshot: item.due_at || null,
+            project_url: projectUrl || null, notes, review_status: "pending",
+            ...(attachment ? { attachment_file_id: attachment.id, content_type: attachment.content_type, file_name: attachment.file_name, file_size: attachment.size } : {})
+        };
+        const result = await collections.committeeWorkItems.updateOne(revisionFilter(item), {
+            $set: { status: "Internal Review", updated_at: now },
+            $push: { submissions: submission, activity: { at: now, actor_id: userId, status: "Internal Review" } },
+            $inc: { revision: 1 }
+        });
+        if (!result.modifiedCount) {
+            if (attachment) await committeeSubmissionFiles.delete(new ObjectId(attachment.id)).catch(() => {});
+            return fail(res, 409, "This task changed while the submission was being uploaded. Refresh and submit again.");
+        }
+        await notifyPublicationExecutives("submission_received", "Publication work submitted", `${item.title} is ready for review.`, id, `publication:submission:${id}:${version}`);
+        return ok(res, "Your work was submitted for review.", { version, submitted_at: now });
+    } catch (error) {
+        if (error.message?.startsWith("Use a JPG")) return fail(res, 422, error.message);
+        return next(error);
+    }
+});
+
+app.get("/api/publication/tasks/:taskId/submissions/:version/attachment", signedIn, async (req, res, next) => {
+    const taskId = publicationTaskId(req.params.taskId);
+    const version = publicationTaskId(req.params.version);
+    if (!taskId || !version) return fail(res, 404, "Submission attachment not found.");
+    try {
+        const [item, user] = await Promise.all([
+            collections.committeeWorkItems.findOne({ id: taskId, committee: "publication", kind: "pubmat" }),
+            getSessionUser(req)
+        ]);
+        if (!item) return fail(res, 404, "Submission attachment not found.");
+        if (Number(req.session.userId) !== item.assignee_user_id && !hasExecutiveAccess(user)) return fail(res, 403, "You cannot view this submission.");
+        const submission = (item.submissions || []).find((entry) => entry.version === version);
+        if (!submission?.attachment_file_id) return fail(res, 404, "Submission attachment not found.");
+        const fileId = new ObjectId(submission.attachment_file_id);
+        const file = await db.collection("committee_submissions.files").findOne({ _id: fileId, "metadata.task_id": taskId });
+        if (!file) return fail(res, 404, "Submission attachment not found.");
+        res.setHeader("Content-Type", file.contentType || "application/octet-stream");
+        res.setHeader("Content-Disposition", `inline; filename="${String(submission.file_name || "submission").replace(/[\\"\r\n]/g, "_")}"`);
+        res.setHeader("Cache-Control", "private, no-store");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        committeeSubmissionFiles.openDownloadStream(fileId).on("error", next).pipe(res);
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/publication/tasks/review", adminOnly, async (req, res, next) => {
+    const id = publicationTaskId(req.body.id);
+    const decision = text(req.body.decision).trim();
+    const note = text(req.body.note).trim();
+    if (!id || !["approve", "revision"].includes(decision) || note.length > 2000 || (decision === "revision" && !note)) return fail(res, 422, "Choose a review decision and provide feedback for requested revisions.");
+    try {
+        const item = await collections.committeeWorkItems.findOne({ id, committee: "publication", kind: "pubmat" });
+        if (!item || !["Submitted for Review", "Internal Review", "Awaiting Approval"].includes(item.status)) return fail(res, 409, "There is no pending submission to review.");
+        const index = (item.submissions || []).length - 1;
+        if (index < 0) return fail(res, 409, "There is no submission to review.");
+        const status = decision === "approve" ? (item.scheduled_post_at ? "Scheduled" : "Approved") : "Revisions Requested";
+        const now = new Date();
+        const update = await collections.committeeWorkItems.updateOne(revisionFilter(item), {
+            $set: {
+                status, updated_at: now,
+                [`submissions.${index}.review_status`]: decision === "approve" ? "approved" : "revisions_requested",
+                [`submissions.${index}.review_note`]: note,
+                [`submissions.${index}.reviewed_at`]: now,
+                [`submissions.${index}.reviewed_by`]: Number(req.session.userId)
+            },
+            $push: {
+                [`submissions.${index}.review_history`]: { decision, note, reviewed_by: Number(req.session.userId), reviewed_at: now },
+                activity: { at: now, actor_id: Number(req.session.userId), status, note }
+            },
+            $inc: { revision: 1 }
+        });
+        if (!update.modifiedCount) return fail(res, 409, "This task changed while you were reviewing it. Refresh and try again.");
+        if (item.assignee_user_id) await createNotification(item.assignee_user_id, {
+            kind: decision === "approve" ? "submission_approved" : "revision_requested",
+            title: decision === "approve" ? "Publication work approved" : "Revisions requested",
+            message: decision === "approve" ? `${item.title} was approved.` : `Feedback is ready for ${item.title}: ${note.slice(0, 220)}`,
+            taskId: id,
+            dedupeKey: `publication:${id}:review:${index + 1}:${decision}`
+        });
+        return ok(res, decision === "approve" ? "Submission approved." : "Revision request sent.");
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/publication/tasks/archive", adminOnly, async (req, res, next) => {
+    const id = publicationTaskId(req.body.id);
+    if (!id) return fail(res, 422, "Choose a valid publication task.");
+    try {
+        const item = await collections.committeeWorkItems.findOne({ id, committee: "publication", kind: "pubmat", status: "Published" });
+        if (!item) return fail(res, 409, "Only published materials can be archived.");
+        const now = new Date();
+        const update = await collections.committeeWorkItems.updateOne(revisionFilter(item), {
+            $set: { status: "Archived", archived_at: now, archived_by: Number(req.session.userId), updated_at: now },
+            $push: { activity: { at: now, actor_id: Number(req.session.userId), status: "Archived" } },
+            $inc: { revision: 1 }
+        });
+        if (!update.modifiedCount) return fail(res, 409, "This task changed while archiving was being recorded.");
+        return ok(res, "Published material archived.");
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/publication/tasks/cancel", adminOnly, async (req, res, next) => {
+    const id = publicationTaskId(req.body.id);
+    if (!id) return fail(res, 422, "Choose a valid publication task.");
+    try {
+        const item = await collections.committeeWorkItems.findOne({ id, committee: "publication", kind: "pubmat" });
+        if (!item || ["Cancelled", "Posted", "Published", "Archived"].includes(item.status)) return fail(res, 409, "This publication task can no longer be cancelled.");
+        const now = new Date();
+        const update = await collections.committeeWorkItems.updateOne(revisionFilter(item), {
+            $set: { status: "Cancelled", updated_at: now },
+            $push: { activity: { at: now, actor_id: Number(req.session.userId), status: "Cancelled" } },
+            $inc: { revision: 1 }
+        });
+        if (!update.modifiedCount) return fail(res, 409, "This task changed while cancellation was being recorded.");
+        if (item.assignee_user_id) await createNotification(item.assignee_user_id, { kind: "task_cancelled", title: "Publication task cancelled", message: `${item.title} was cancelled.`, taskId: id, dedupeKey: `publication:${id}:cancelled:${now.getTime()}` });
+        return ok(res, "Publication task cancelled.");
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/publication/tasks/post", adminOnly, async (req, res, next) => {
+    const id = publicationTaskId(req.body.id);
+    const postedAt = req.body.posted_at ? parseDate(text(req.body.posted_at)) : new Date();
+    const publishedUrl = text(req.body.published_url).trim();
+    if (!id || !postedAt || (publishedUrl && (!/^https:\/\//i.test(publishedUrl) || publishedUrl.length > 1200))) return fail(res, 422, "Enter a valid posting date and an HTTPS link to the published material.");
+    try {
+        const item = await collections.committeeWorkItems.findOne({ id, committee: "publication", kind: "pubmat" });
+        if (!item || !["Approved", "Scheduled"].includes(item.status)) return fail(res, 409, "Only approved or scheduled work can be marked as published.");
+        const update = await collections.committeeWorkItems.updateOne(revisionFilter(item), {
+            $set: { status: "Published", posted_at: postedAt, posted_by: Number(req.session.userId), ...(publishedUrl ? { published_url: publishedUrl } : {}), updated_at: new Date() },
+            $push: { activity: { at: new Date(), actor_id: Number(req.session.userId), status: "Published", posted_at: postedAt } },
+            $inc: { revision: 1 }
+        });
+        if (!update.modifiedCount) return fail(res, 409, "This task changed while posting was being recorded.");
+        if (item.assignee_user_id) await createNotification(item.assignee_user_id, { kind: "task_posted", title: "Publication is live", message: `${item.title} has been recorded as posted.`, taskId: id, dedupeKey: `publication:${id}:posted` });
+        return ok(res, "Actual posting date recorded.");
+    } catch (error) { return next(error); }
+});
 
 app.get("/api/admin/dashboard", adminOnly, async (_req, res, next) => {
     try {
@@ -1482,6 +1821,8 @@ app.get("/api/admin/committee-work", committeeWorkspaceAccess, async (req, res, 
     try {
         const isExecutive = !req.workspaceCommittee;
         const query = committee && committee !== "executive" ? { committee } : {};
+        if (req.workspaceCommittee === "publication") Object.assign(query, { kind: "pubmat", assignee_user_id: Number(req.session.userId) });
+        const itemProjection = isExecutive ? {} : { submissions: 0, deadline_history: 0, change_history: 0, assignee_history: 0 };
         const visibleEventsQuery = isExecutive
             ? {}
             : { status: { $ne: "cancelled" }, $or: [{ publication_status: "published" }, { publication_status: { $exists: false } }] };
@@ -1492,9 +1833,9 @@ app.get("/api/admin/committee-work", committeeWorkspaceAccess, async (req, res, 
                 { role: "admin" },
                 { council_position: { $in: [...executiveCouncilPositions] } }
             ] }
-            : { committee_assignment: req.workspaceCommittee };
+            : req.workspaceCommittee === "publication" ? { id: Number(req.session.userId) } : { committee_assignment: req.workspaceCommittee };
         const [items, events, users, eventCount, activeEventCount, registrationCount, attendanceCount, workApprovalCount, assignmentQueue, pendingEvents, financeRecords] = await Promise.all([
-            collections.committeeWorkItems.find(query).sort({ due_at: 1, updated_at: -1 }).toArray(),
+            collections.committeeWorkItems.find(query, { projection: itemProjection }).sort({ due_at: 1, updated_at: -1 }).toArray(),
             collections.events.find(visibleEventsQuery, { projection: { id: 1, title: 1, start_date: 1, status: 1 } }).sort({ start_date: -1 }).toArray(),
             collections.users.find(usersQuery, { projection: { id: 1, first_name: 1, last_name: 1, email: 1, role: 1 } }).sort({ first_name: 1 }).toArray(),
             isExecutive ? collections.events.countDocuments({}) : Promise.resolve(0),
@@ -1524,16 +1865,20 @@ app.get("/api/admin/committee-work", committeeWorkspaceAccess, async (req, res, 
 });
 
 app.post("/api/admin/committee-work/save", committeeWorkspaceAccess, async (req, res, next) => {
+    if (req.workspaceCommittee === "publication") return fail(res, 403, "Publication members use their assigned task submission workflow.");
     const id = Number(req.body.id || 0);
     const committee = req.workspaceCommittee || text(req.body.committee).trim().toLowerCase();
     const kind = text(req.body.kind).trim().toLowerCase();
     const title = text(req.body.title).trim();
     const details = text(req.body.details).trim();
-    const status = text(req.body.status).trim();
+    const concept = text(req.body.concept).trim();
+    const deliverables = text(req.body.deliverables).split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 40);
+    let status = text(req.body.status).trim();
     const priority = text(req.body.priority || "normal").trim().toLowerCase();
     const eventId = req.body.event_id ? Number(req.body.event_id) : null;
     const assigneeId = req.body.assignee_user_id ? Number(req.body.assignee_user_id) : null;
     const dueAt = req.body.due_at ? parseDate(text(req.body.due_at)) : null;
+    const scheduledPostAt = req.body.scheduled_post_at ? parseDate(text(req.body.scheduled_post_at)) : null;
     const attachmentUrl = text(req.body.attachment_url).trim();
     const timeSlot = text(req.body.time_slot).trim();
     const duration = req.body.duration_minutes ? Number(req.body.duration_minutes) : null;
@@ -1542,6 +1887,14 @@ app.post("/api/admin/committee-work/save", committeeWorkspaceAccess, async (req,
     const kindsByCommittee = { executive: ["approval", "task"], publication: ["pubmat", "task"], program: ["program", "task"], production: ["production", "task"] };
     if (!workCommittees.has(committee) || !validKinds.has(kind) || !kindsByCommittee[committee]?.includes(kind) || !title || title.length > 180 || details.length > 4000 || !workStatuses.has(status) || !["low", "normal", "high", "urgent"].includes(priority)) return fail(res, 422, "Review the work item fields and status.");
     if (req.body.due_at && !dueAt) return fail(res, 422, "Enter a valid deadline.");
+    if (req.body.scheduled_post_at && !scheduledPostAt) return fail(res, 422, "Enter a valid scheduled posting date.");
+    if (committee === "publication" && kind === "pubmat") {
+        if (["Request Submitted", "Requirements Review"].includes(status) && assigneeId && status !== "Requirements Review") status = "Assigned";
+        if (status === "Assigned" && !assigneeId) status = "Request Submitted";
+        if (status === "Approved" && scheduledPostAt) status = "Scheduled";
+        if (status === "Scheduled" && !scheduledPostAt) status = "Approved";
+    }
+    if (concept.length > 1000 || deliverables.some((entry) => entry.length > 180)) return fail(res, 422, "Keep the concept under 1,000 characters and deliverables under 180 characters each.");
     if (timeSlot && !/^([01]\d|2[0-3]):[0-5]\d$/.test(timeSlot)) return fail(res, 422, "Enter a valid local start time.");
     if (duration !== null && (!Number.isInteger(duration) || duration < 1 || duration > 1440)) return fail(res, 422, "Duration must be between 1 and 1,440 minutes.");
     if (eventId !== null && (!Number.isInteger(eventId) || eventId < 1)) return fail(res, 422, "Choose a valid event.");
@@ -1551,45 +1904,101 @@ app.post("/api/admin/committee-work/save", committeeWorkspaceAccess, async (req,
         const now = new Date();
         if (eventId && !await collections.events.findOne({ id: eventId }, { projection: { id: 1 } })) return fail(res, 404, "Event not found.");
         if (assigneeId) {
-            const assigneeQuery = req.workspaceCommittee
-                ? { id: assigneeId, committee_assignment: req.workspaceCommittee }
-                : { id: assigneeId, $or: [
-                    { committee_assignment: committee },
-                    { committee_assignment: "executive" },
-                    { role: "admin" },
-                    { council_position: { $in: [...executiveCouncilPositions] } }
-                ] };
+            const assigneeQuery = committee === "publication" && kind === "pubmat"
+                ? { id: assigneeId, committee_assignment: "publication" }
+                : req.workspaceCommittee
+                    ? { id: assigneeId, committee_assignment: req.workspaceCommittee }
+                    : { id: assigneeId, $or: [
+                        { committee_assignment: committee },
+                        { committee_assignment: "executive" },
+                        { role: "admin" },
+                        { council_position: { $in: [...executiveCouncilPositions] } }
+                    ] };
             if (!await collections.users.findOne(assigneeQuery, { projection: { id: 1 } })) {
                 return fail(res, 422, req.workspaceCommittee ? "You can assign work only to members of your committee." : "Assignee must belong to this committee or the Executive Committee.");
             }
         }
-        if (!id && ((kind === "pubmat" && status !== "Request Submitted") || (kind !== "pubmat" && !["Not Started", "Request Submitted"].includes(status)))) return fail(res, 422, "New items must start at the first step in their workflow.");
+        if (!id && ((kind === "pubmat" && !["Not Started", "Request Submitted", "Assigned"].includes(status)) || (kind !== "pubmat" && !["Not Started", "Request Submitted"].includes(status)))) return fail(res, 422, "New items must start at the first step in their workflow.");
         if (id) {
             const existing = await collections.committeeWorkItems.findOne({ id });
             if (!existing) return fail(res, 404, "Work item not found.");
             if (existing.committee !== committee || existing.kind !== kind) return fail(res, 422, "A work item cannot be moved between committee workflows or types after creation.");
-            const pubmatNext = { "Request Submitted": ["Requirements Review"], "Requirements Review": ["Assigned", "Request Submitted"], "Assigned": ["In Design", "Revisions Requested"], "In Design": ["Internal Review", "Revisions Requested"], "Internal Review": ["Revisions Requested", "Awaiting Approval"], "Revisions Requested": ["In Design"], "Awaiting Approval": ["Approved", "Revisions Requested"], "Approved": ["Scheduled", "Archived"], "Scheduled": ["Published", "Archived"], "Published": ["Archived"], "Archived": [] };
+            const pubmatNext = {
+                "Not Started": ["In Design", "In Progress", "Cancelled"],
+                "Request Submitted": ["Requirements Review", "Assigned", "Cancelled"],
+                "Requirements Review": ["Assigned", "Request Submitted", "Cancelled"],
+                "Assigned": ["In Design", "Revisions Requested", "Request Submitted", "Cancelled"],
+                "In Design": ["Internal Review", "Revisions Requested", "Cancelled"],
+                "Internal Review": ["Awaiting Approval", "Revisions Requested", "Cancelled"],
+                "Awaiting Approval": ["Approved", "Scheduled", "Revisions Requested", "Cancelled"],
+                "Revisions Requested": ["In Design", "Internal Review", "Cancelled"],
+                "Approved": ["Scheduled", "Cancelled"],
+                "Scheduled": ["Approved", "Published", "Cancelled"],
+                "Published": ["Archived"],
+                "Archived": [],
+                "Submitted for Review": ["Cancelled"],
+                "Revision Requested": ["Cancelled"],
+                "In Progress": ["Cancelled"],
+                "Posted": [],
+                "Cancelled": []
+            };
             const taskNext = { "Not Started": ["In Progress", "Blocked"], "In Progress": ["Blocked", "Complete"], "Blocked": ["In Progress"], "Complete": [] };
             const transitions = existing.kind === "pubmat" ? pubmatNext : taskNext;
+            if (existing.kind === "pubmat" && status !== existing.status) {
+                if (["Internal Review", "Submitted for Review"].includes(status)) return fail(res, 422, "Members submit their work to enter internal review.");
+                if (["Approved", "Revisions Requested", "Revision Requested"].includes(status)) return fail(res, 422, "Use the submission review controls to approve work or request revisions.");
+                if (["Published", "Posted"].includes(status)) return fail(res, 422, "Record the actual publication using the publish action.");
+                if (["Awaiting Approval", "Scheduled"].includes(status) && !(existing.submissions || []).length) return fail(res, 422, "A task needs a member submission before it can enter approval or scheduling.");
+                if (status === "Archived" && existing.status !== "Published") return fail(res, 422, "Only published materials can be archived.");
+            }
             if (status !== existing.status && !(transitions[existing.status] || []).includes(status)) return fail(res, 422, "That status change is not allowed in this workflow.");
             const completed = new Map((existing.checklist || []).map((item) => [item.label, item.done]));
             req.body.checklist = checklistLabels.map((label) => ({ label, done: Boolean(completed.get(label)) }));
         } else {
             req.body.checklist = checklistLabels.map((label) => ({ label, done: false }));
         }
-        const values = { committee, kind, title, details, status, priority, event_id: eventId, assignee_user_id: assigneeId, due_at: dueAt, attachment_url: attachmentUrl, checklist: req.body.checklist, time_slot: timeSlot, duration_minutes: duration, updated_at: now };
+        const publicationFields = committee === "publication" && kind === "pubmat"
+            ? { concept, deliverables, scheduled_post_at: scheduledPostAt }
+            : {};
+        const values = { committee, kind, title, details, status, priority, event_id: eventId, assignee_user_id: assigneeId, due_at: dueAt, attachment_url: attachmentUrl, checklist: req.body.checklist, time_slot: timeSlot, duration_minutes: duration, ...publicationFields, updated_at: now };
         if (id) {
-            const result = await collections.committeeWorkItems.updateOne({ id }, { $set: values, $push: { activity: { at: now, actor_id: Number(req.session.userId), status } } });
+            const existing = await collections.committeeWorkItems.findOne({ id });
+            if (!existing) return fail(res, 404, "Work item not found.");
+            const deadlineChanged = committee === "publication" && kind === "pubmat" && (existing.due_at?.getTime?.() || null) !== (dueAt?.getTime?.() || null);
+            const assignmentChanged = existing.assignee_user_id !== assigneeId;
+            const deadlineHistory = [...(existing.deadline_history || [])];
+            if (deadlineChanged) deadlineHistory.push({ from: existing.due_at || null, to: dueAt, changed_at: now, changed_by: Number(req.session.userId) });
+            const assigneeHistory = [...(existing.assignee_history || [])];
+            if (assignmentChanged) assigneeHistory.push({ from_user_id: existing.assignee_user_id || null, to_user_id: assigneeId, changed_at: now, changed_by: Number(req.session.userId) });
+            const changedFields = Object.keys(values).filter((key) => !["updated_at", "checklist"].includes(key) && JSON.stringify(values[key]) !== JSON.stringify(existing[key] ?? null));
+            const changeHistory = [...(existing.change_history || [])];
+            if (changedFields.length) changeHistory.push({ changed_at: now, changed_by: Number(req.session.userId), fields: changedFields });
+            const result = await collections.committeeWorkItems.updateOne({ id }, {
+                $set: { ...values, revision: Number(existing.revision || 0) + 1, deadline_history: deadlineHistory, assignee_history: assigneeHistory, change_history: changeHistory, ...(assignmentChanged && assigneeId ? { assigned_at: now } : {}) },
+                $push: { activity: { at: now, actor_id: Number(req.session.userId), status } }
+            });
             if (!result.matchedCount) return fail(res, 404, "Work item not found.");
+            if (committee === "publication" && kind === "pubmat") {
+                if (assignmentChanged && assigneeId) await createNotification(assigneeId, { kind: existing.assignee_user_id ? "task_reassigned" : "task_assigned", title: existing.assignee_user_id ? "Publication task reassigned" : "New publication task", message: `${title} is assigned to you.`, taskId: id, dedupeKey: `publication:${id}:assigned:${now.getTime()}:${assigneeId}` });
+                if (assignmentChanged && existing.assignee_user_id && existing.assignee_user_id !== assigneeId) await createNotification(existing.assignee_user_id, { kind: "task_unassigned", title: "Publication assignment updated", message: `${title} is no longer assigned to you.`, taskId: id, dedupeKey: `publication:${id}:unassigned:${now.getTime()}:${existing.assignee_user_id}` });
+                if (deadlineChanged && assigneeId) await createNotification(assigneeId, { kind: "deadline_changed", title: "Publication deadline changed", message: `The deadline for ${title} was updated.`, taskId: id, dedupeKey: `publication:${id}:deadline:${now.getTime()}` });
+                if (status === "Cancelled" && existing.status !== "Cancelled" && assigneeId) await createNotification(assigneeId, { kind: "task_cancelled", title: "Publication task cancelled", message: `${title} was cancelled.`, taskId: id, dedupeKey: `publication:${id}:cancelled:${now.getTime()}` });
+            }
             return ok(res, "Work item updated.", { id });
         }
         const newId = await nextId("committee_work_items");
-        await collections.committeeWorkItems.insertOne({ id: newId, ...values, created_at: now, created_by: Number(req.session.userId) });
+        const item = {
+            id: newId, ...values, created_at: now, created_by: Number(req.session.userId), revision: 0,
+            ...(committee === "publication" && kind === "pubmat" ? { submissions: [], deadline_history: [], change_history: [], assignee_history: assigneeId ? [{ from_user_id: null, to_user_id: assigneeId, changed_at: now, changed_by: Number(req.session.userId) }] : [], ...(assigneeId ? { assigned_at: now } : {}) } : {})
+        };
+        await collections.committeeWorkItems.insertOne(item);
+        if (committee === "publication" && kind === "pubmat" && assigneeId) await createNotification(assigneeId, { kind: "task_assigned", title: "New publication task", message: `${title} is assigned to you.`, taskId: newId, dedupeKey: `publication:${newId}:assigned:${now.getTime()}:${assigneeId}` });
         return ok(res, "Work item created.", { id: newId });
     } catch (error) { return next(error); }
 });
 
 app.post("/api/admin/committee-work/delete", committeeWorkspaceAccess, async (req, res, next) => {
+    if (req.workspaceCommittee === "publication") return fail(res, 403, "Only Executive Committee members can remove publication tasks.");
     const id = Number(req.body.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 422, "Choose a valid work item.");
     try {
@@ -1600,6 +2009,7 @@ app.post("/api/admin/committee-work/delete", committeeWorkspaceAccess, async (re
 });
 
 app.post("/api/admin/committee-work/checklist", committeeWorkspaceAccess, async (req, res, next) => {
+    if (req.workspaceCommittee === "publication") return fail(res, 403, "Publication checklist changes must be submitted with the assigned work.");
     const id = Number(req.body.id);
     const label = text(req.body.label).trim();
     if (!Number.isInteger(id) || id < 1 || !label || label.length > 180 || typeof req.body.done !== "boolean") return fail(res, 422, "Choose a checklist item and completion status.");
@@ -2030,6 +2440,8 @@ app.post("/api/attendance/checkin", adminOnly, async (req, res, next) => {
     } catch (error) { return next(error); }
 });
 
+app.use("/api", (req, res) => fail(res, 404, "API route not found. Confirm the backend is running the current application version.", { code: "API_ROUTE_NOT_FOUND" }));
+
 app.use((error, req, res, _next) => {
     if (res.headersSent) return;
     const requestId = req.requestId || crypto.randomUUID();
@@ -2069,11 +2481,12 @@ async function connectDatabase() {
     db = mongoClient.db(databaseName);
     eventCovers = new GridFSBucket(db, { bucketName: "event_covers" });
     profileMedia = new GridFSBucket(db, { bucketName: "profile_media" });
+    committeeSubmissionFiles = new GridFSBucket(db, { bucketName: "committee_submissions" });
     collections = {
         users: db.collection("users"), events: db.collection("events"),
         registrations: db.collection("registrations"), attendance: db.collection("attendance"),
         event_highlights: db.collection("event_highlights"), event_schedules: db.collection("event_schedules"),
-        eventAssignments: db.collection("event_assignments"), committeeWorkItems: db.collection("committee_work_items"), financialRecords: db.collection("financial_records"),
+        eventAssignments: db.collection("event_assignments"), committeeWorkItems: db.collection("committee_work_items"), notifications: db.collection("notifications"), financialRecords: db.collection("financial_records"),
         governanceMeetings: db.collection("governance_meetings"), councilAttendance: db.collection("council_attendance"),
         councilAttendancePasses: db.collection("council_attendance_passes"), councilExcuses: db.collection("council_excuses"),
         councilReports: db.collection("council_committee_reports"), councilInventory: db.collection("council_inventory"),
@@ -2101,6 +2514,9 @@ async function connectDatabase() {
         collections.eventAssignments.createIndex({ event_id: 1, status: 1 }),
         collections.committeeWorkItems.createIndex({ id: 1 }, { unique: true }),
         collections.committeeWorkItems.createIndex({ committee: 1, status: 1, due_at: 1 }),
+        collections.committeeWorkItems.createIndex({ committee: 1, kind: 1, assignee_user_id: 1, due_at: 1 }),
+        collections.notifications.createIndex({ user_id: 1, dedupe_key: 1 }, { unique: true }),
+        collections.notifications.createIndex({ user_id: 1, read_at: 1, created_at: -1 }),
         collections.financialRecords.createIndex({ id: 1 }, { unique: true }),
         collections.financialRecords.createIndex({ public_status: 1, period: -1 }),
         collections.governanceMeetings.createIndex({ id: 1 }, { unique: true }),

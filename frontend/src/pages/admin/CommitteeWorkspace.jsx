@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 
 import AdminNav from "../../components/AdminNav";
-import { AdminPageSkeleton, SkeletonBlock, SkeletonPageHeading, SkeletonRows } from "../../components/LoadingSkeletons";
+import CommitteeWorkspaceTabs from "../../components/CommitteeWorkspaceTabs";
+import { AdminPageSkeleton, SkeletonBlock, SkeletonRows } from "../../components/LoadingSkeletons";
 import { deleteCommitteeWork, getCommitteeWork, reviewAdminEvent, reviewEventAssignment, saveCommitteeWork, updateCommitteeChecklist } from "../../services/api";
 import { hasExecutiveAccess } from "../../utils/workspaceAccess";
 
@@ -96,13 +97,13 @@ export default function CommitteeWorkspace() {
     ] : workspace.focus.map((label, index) => [label, index === 0 ? `${items.filter((item) => !["Complete", "Published", "Archived"].includes(item.status)).length} active items` : index === 1 ? `${overdue} overdue` : `${items.length} total records`]);
 
     if (loading) return <AdminPageSkeleton className="committee-workspace-page">
-        <header className="admin-header admin-page-heading"><SkeletonPageHeading /></header>
+        <header className="admin-header admin-page-heading"><div><span>COMMITTEE WORKSPACE</span><h1>{workspace.title}</h1><p>{workspace.intro}</p>{canSwitchWorkspace && <CommitteeWorkspaceTabs activeCommittee={committee} />}</div></header>
         <section className="committee-focus-grid" aria-hidden="true">{Array.from({ length: committee === "executive" ? 5 : 3 }, (_, index) => <article key={index}><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonBlock className="ui-skeleton-section-title is-small" /><SkeletonBlock className="ui-skeleton-description" /></article>)}</section>
         <div className="committee-work-board-skeleton"><section><SkeletonBlock className="ui-skeleton-section-title" /><div className="ui-skeleton-board-columns">{Array.from({ length: committee === "publication" ? 4 : 3 }, (_, index) => <div key={index}><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonRows count={2} /></div>)}</div></section><section><SkeletonBlock className="ui-skeleton-section-title" />{Array.from({ length: 5 }, (_, index) => <div className="ui-skeleton-work-field" key={index}><SkeletonBlock className="ui-skeleton-form-label" /><SkeletonBlock className="ui-skeleton-form-field" /></div>)}</section></div>
     </AdminPageSkeleton>;
 
     return <><AdminNav /><main className="admin-page committee-workspace-page">
-        <header className="admin-header admin-page-heading"><div><span>COMMITTEE WORKSPACE</span><h1>{workspace.title}</h1><p>{workspace.intro}</p>{canSwitchWorkspace && <nav className="committee-workspace-tabs" aria-label="Choose committee workspace">{Object.entries(workspaces).map(([key, item]) => <Link key={key} className={key === committee ? "is-active" : ""} to={`/admin/committees/${key}`}>{item.title.replace(" Committee", "")}</Link>)}</nav>}</div></header>
+        <header className="admin-header admin-page-heading"><div><span>COMMITTEE WORKSPACE</span><h1>{workspace.title}</h1><p>{workspace.intro}</p>{canSwitchWorkspace && <CommitteeWorkspaceTabs activeCommittee={committee} />}</div></header>
         <section className="committee-focus-grid" aria-label="Workspace overview">
             {focusMetrics.map(([label, value], index) => <article key={label}><span>0{index + 1}</span><strong>{label}</strong><small>{value}</small></article>)}
         </section>

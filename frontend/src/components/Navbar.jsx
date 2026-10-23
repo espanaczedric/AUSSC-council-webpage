@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { getCurrentUser, getEventImageUrl, logoutWithAnimation } from "../services/api";
 import { committeeLabels, getCommitteeWorkspacePath, hasExecutiveAccess } from "../utils/workspaceAccess";
+import NotificationCenter from "./NotificationCenter";
 
 
 /*
@@ -86,6 +87,9 @@ function Navbar() {
     const dropdownRef = useRef(null);
     const avatarRef = useRef(null);
     const lastScrollPositionRef = useRef(0);
+    const canReceiveNotifications = Boolean(user && (
+        hasExecutiveAccess(user) || user.committee_assignment || user.council_position
+    ));
 
     useEffect(() => {
         setMenuOpen(false);
@@ -318,6 +322,7 @@ function Navbar() {
 
                 {/* ---- LOGIN / AVATAR ---- */}
                     <div className="navbar-user-wrapper">
+                        {canReceiveNotifications && <NotificationCenter />}
 
                         {/* AVATAR BUTTON */}
                         <button

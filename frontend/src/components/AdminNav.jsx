@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { committeeLabels, hasExecutiveAccess } from "../utils/workspaceAccess";
 import { getEventImageUrl, logoutWithAnimation } from "../services/api";
+import NotificationCenter from "./NotificationCenter";
 
 const links = [
     { label: "Overview", to: "/admin", end: true, icon: "overview" },
@@ -65,9 +66,14 @@ export default function AdminNav() {
         ? [{ label: committeeLabels[user.committee_assignment] || "Committee workspace", to: `/admin/committees/${user.committee_assignment}`, icon: "people" }]
         : [];
     const visibleLinks = isExecutive ? links : committeeLink;
-    const current = visibleLinks.find((link) => link.end
+    const isCommitteeWorkspaceRoute = location.pathname.startsWith("/admin/committees/");
+    const current = visibleLinks.find((link) => (link.end
         ? location.pathname === link.to
-        : location.pathname.startsWith(link.to)) || visibleLinks[0] || links[0];
+        : location.pathname.startsWith(link.to)) || (isExecutive && link.label === "Committees" && isCommitteeWorkspaceRoute)) || visibleLinks[0] || links[0];
+    const selectedCommittee = isExecutive
+        ? location.pathname.match(/^\/admin\/committees\/([^/]+)/)?.[1]
+        : null;
+    const currentLabel = (selectedCommittee && committeeLabels[selectedCommittee]) || current.label;
 
     useEffect(() => setMenuOpen(false), [location.pathname]);
 
@@ -122,7 +128,7 @@ export default function AdminNav() {
                             to={link.to}
                             end={link.end}
                             onClick={closeMenu}
-                            className={({ isActive }) => `admin-sidebar-link${isActive ? " is-active" : ""}`}
+                            className={({ isActive }) => `admin-sidebar-link${isActive || (isExecutive && link.label === "Committees" && isCommitteeWorkspaceRoute) ? " is-active" : ""}`}
                         >
                             <AdminNavIcon name={link.icon} />
                             <span>{link.label}</span>
@@ -158,10 +164,11 @@ export default function AdminNav() {
                 </button>
                 <div className="admin-topbar-context">
                     <span>COUNCIL WORKSPACE</span>
-                    <strong>{current.label}</strong>
+                    <strong>{currentLabel}</strong>
                 </div>
                 <div className="admin-topbar-actions">
                     <Link className="admin-topbar-public-link" to="/">View public site <span aria-hidden="true">↗</span></Link>
+                    {user && <NotificationCenter />}
                     <button className="admin-topbar-logout" type="button" onClick={handleSignOut} disabled={signingOut}>
                         {signingOut ? "Signing out…" : "Sign out"}
                     </button>

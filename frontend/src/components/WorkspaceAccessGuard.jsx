@@ -11,6 +11,8 @@ export default function WorkspaceAccessGuard({ children, committeeRoute = false,
     const location = useLocation();
     const navigate = useNavigate();
     const { committee } = useParams();
+    const routeSegments = location.pathname.split("/").filter(Boolean);
+    const routeCommittee = committee || (committeeRoute ? routeSegments[routeSegments.length - 1] : undefined);
     const [state, setState] = useState("checking");
     const [error, setError] = useState("");
     const [attempt, setAttempt] = useState(0);
@@ -42,11 +44,11 @@ export default function WorkspaceAccessGuard({ children, committeeRoute = false,
             }
 
             if (committeeRoute) {
-                if (!committeeLabels[committee]) {
+                if (!committeeLabels[routeCommittee]) {
                     navigate(executive ? "/admin" : committeePath, { replace: true });
                     return;
                 }
-                if (executive || assignedCommittee === committee) {
+                if (executive || assignedCommittee === routeCommittee) {
                     setState("allowed");
                     return;
                 }
@@ -70,7 +72,7 @@ export default function WorkspaceAccessGuard({ children, committeeRoute = false,
         });
 
         return () => { active = false; };
-    }, [attempt, committee, committeeRoute, councilRoute, location.pathname, navigate]);
+    }, [attempt, committee, routeCommittee, committeeRoute, councilRoute, location.pathname, navigate]);
 
     if (state === "allowed") return children;
     if (state === "error") {

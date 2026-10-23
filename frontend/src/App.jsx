@@ -41,6 +41,7 @@ import EventHighlightsManager from "./pages/admin/EventHighlightsManager";
 import Users from "./pages/admin/Users";
 import CommitteeWorkspace from "./pages/admin/CommitteeWorkspace";
 import AdminFinance from "./pages/admin/AdminFinance";
+import PublicationWorkspace from "./pages/admin/PublicationWorkspace";
 
 function NotFound() {
     return (
@@ -190,6 +191,7 @@ function AppRoutes() {
                     element={<WorkspaceAccessGuard><Users /></WorkspaceAccessGuard>}
                 />
 
+                <Route path="/admin/committees/publication" element={<WorkspaceAccessGuard committeeRoute><PublicationWorkspace /></WorkspaceAccessGuard>} />
                 <Route path="/admin/committees/:committee" element={<WorkspaceAccessGuard committeeRoute><CommitteeWorkspace /></WorkspaceAccessGuard>} />
                 <Route path="/admin/finance" element={<WorkspaceAccessGuard><AdminFinance /></WorkspaceAccessGuard>} />
 
