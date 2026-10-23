@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import AdminNav from "../../components/AdminNav";
@@ -22,18 +22,6 @@ const publicationStatuses = [
 ];
 
 const displayNumber = (value) => Number.isFinite(Number(value)) ? numberFormat.format(Number(value)) : "—";
-const formatMonth = (key) => {
-    const [year, month] = key.split("-").map(Number);
-    return new Date(year, month - 1, 1).toLocaleDateString("en-PH", { month: "short" });
-};
-const getRecentMonths = (count = 6) => {
-    const now = new Date();
-    return Array.from({ length: count }, (_, index) => {
-        const month = new Date(now.getFullYear(), now.getMonth() - count + index + 1, 1);
-        return `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
-    });
-};
-
 function SectionHeading({ eyebrow, title, detail, action, id }) {
     return (
         <div className="admin-overview-heading">
@@ -56,63 +44,6 @@ function OverviewMetric({ label, value, detail, to }) {
     return to
         ? <Link className="admin-overview-metric" to={to}>{content}</Link>
         : <article className="admin-overview-metric">{content}</article>;
-}
-
-function RegistrationTrend({ months, values }) {
-    const width = 660;
-    const height = 248;
-    const left = 48;
-    const right = 638;
-    const top = 20;
-    const bottom = 193;
-    const maximum = Math.max(1, ...values.flatMap((item) => [item.registrations, item.checked_in]));
-    const pointsFor = (key) => values.map((item, index) => ({
-        x: left + (values.length > 1 ? index * (right - left) / (values.length - 1) : (right - left) / 2),
-        y: bottom - (item[key] / maximum) * (bottom - top),
-        value: item[key]
-    }));
-    const pathFor = (points) => points.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" ");
-    const registrationPoints = pointsFor("registrations");
-    const checkInPoints = pointsFor("checked_in");
-    const hasData = values.some((item) => item.registrations || item.checked_in);
-
-    return (
-        <article className="admin-overview-chart-card">
-            <div className="admin-overview-chart-heading">
-                <div>
-                    <span>STUDENT EVENT ACTIVITY</span>
-                    <h3>Registrations & check-ins</h3>
-                </div>
-                <Link to="/admin/registrations">View registrations</Link>
-            </div>
-            <div className="admin-trend-legend" aria-label="Chart legend">
-                <span><i className="is-registration" /> Registrations</span>
-                <span><i className="is-checkin" /> QR check-ins</span>
-            </div>
-            <div className="admin-trend-chart-wrap">
-                <svg className="admin-trend-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Monthly student registrations and QR check-ins for the last six months">
-                    {[0, 1, 2, 3].map((step) => {
-                        const y = top + step * (bottom - top) / 3;
-                        return <g key={step}>
-                            <line x1={left} x2={right} y1={y} y2={y} className="admin-trend-gridline" />
-                            <text x={left - 10} y={y + 4} textAnchor="end" className="admin-trend-axis-label">{Math.round(maximum * (3 - step) / 3)}</text>
-                        </g>;
-                    })}
-                    {hasData && <>
-                        <path d={pathFor(registrationPoints)} className="admin-trend-line is-registration" />
-                        <path d={pathFor(checkInPoints)} className="admin-trend-line is-checkin" />
-                        {registrationPoints.map((point, index) => <circle key={`r-${months[index]}`} cx={point.x} cy={point.y} r="4" className="admin-trend-point is-registration"><title>{months[index]}: {point.value} registrations</title></circle>)}
-                        {checkInPoints.map((point, index) => <circle key={`c-${months[index]}`} cx={point.x} cy={point.y} r="4" className="admin-trend-point is-checkin"><title>{months[index]}: {point.value} QR check-ins</title></circle>)}
-                    </>}
-                    {months.map((month, index) => {
-                        const x = left + (months.length > 1 ? index * (right - left) / (months.length - 1) : (right - left) / 2);
-                        return <text key={month} x={x} y={bottom + 26} textAnchor="middle" className="admin-trend-axis-label">{formatMonth(month)}</text>;
-                    })}
-                    {!hasData && <text x={(left + right) / 2} y={(top + bottom) / 2} textAnchor="middle" className="admin-trend-empty-label">No registration activity in this period</text>}
-                </svg>
-            </div>
-        </article>
-    );
 }
 
 function HorizontalBreakdown({ title, eyebrow, rows, emptyLabel, link }) {
@@ -212,7 +143,6 @@ function AdminDashboardSkeleton() {
                         <AdminSkeletonBar className="admin-skeleton-page-title" />
                         <AdminSkeletonBar className="admin-skeleton-page-subtitle" />
                     </div>
-                    <AdminSkeletonBar className="admin-skeleton-create-action" />
                 </section>
 
                 <section className="admin-overview-group" aria-hidden="true">
@@ -223,7 +153,7 @@ function AdminDashboardSkeleton() {
                         {Array.from({ length: 4 }, (_, index) => <article className="admin-overview-metric" key={index}><AdminSkeletonBar className="admin-skeleton-metric-label" /><AdminSkeletonBar className="admin-skeleton-metric-number" /><AdminSkeletonBar className="admin-skeleton-metric-detail" /></article>)}
                     </div>
                     <div className="admin-overview-chart-grid student-chart-grid">
-                        <DashboardChartSkeleton kind="graph" />
+                        <DashboardChartSkeleton rowCount={4} />
                         <DashboardChartSkeleton rowCount={4} />
                     </div>
                 </section>
@@ -282,15 +212,6 @@ function AdminDashboard() {
     const council = data?.council || {};
     const eventData = data?.events || {};
     const events = data?.eventsList || [];
-    const [months, trend] = useMemo(() => {
-        const keys = getRecentMonths(6);
-        const byMonth = new Map((students.registration_trend || []).map((item) => [item.month, item]));
-        return [keys, keys.map((month) => ({
-            registrations: Number(byMonth.get(month)?.registrations || 0),
-            checked_in: Number(byMonth.get(month)?.checked_in || 0)
-        }))];
-    }, [students.registration_trend]);
-
     const councilMetrics = [
         { label: "Appointed council members", value: displayNumber(council.roster_count), detail: "Current roster", to: "/admin/users" },
         { label: "Voting members", value: displayNumber(council.voting_member_count), detail: "Quorum basis", to: "/council" },
@@ -313,10 +234,6 @@ function AdminDashboard() {
                         <h1>Dashboard</h1>
                         <p>Student participation, council governance, and stewardship in one view.</p>
                     </div>
-                    <Link to="/admin/events/create" className="admin-primary-action">
-                        <span aria-hidden="true">+</span>
-                        Create event
-                    </Link>
                 </section>
 
                 {error && <p className="admin-feedback is-error" role="alert">{error}</p>}
@@ -324,18 +241,24 @@ function AdminDashboard() {
                 <section className="admin-overview-group student-overview" aria-labelledby="student-overview-title">
                     <SectionHeading
                         id="student-overview-title"
-                        eyebrow="STUDENT ACTIVITY"
-                        title="Student participation"
-                        detail="Event reach and attendance verified through student registrations and QR check-ins."
+                        eyebrow="PARTICIPATION"
+                        title="Council participation & attendance"
+                        detail="Council participation supports event planning. Student identity scans create attendance records independently."
                     />
                     <div className="admin-overview-metrics">
                         <OverviewMetric label="Student accounts" value={displayNumber(students.account_count)} detail="Registered student accounts" to="/admin/users" />
-                        <OverviewMetric label="Event registrations" value={displayNumber(students.registration_count)} detail="Active student registrations" to="/admin/registrations" />
-                        <OverviewMetric label="QR check-ins" value={displayNumber(students.check_in_count)} detail="Student attendance recorded" to="/admin/attendance" />
-                        <OverviewMetric label="Check-in rate" value={`${Number(students.check_in_rate || 0)}%`} detail="Check-ins / active registrations" to="/admin/attendance" />
+                        <OverviewMetric label="Participation pending" value={displayNumber(council.event_responses_pending)} detail="Waiting for members" to="/admin/event-responses" />
+                        <OverviewMetric label="Student attendance sessions" value={displayNumber(students.attendance_session_count)} detail="Recorded check-in sessions" to="/admin/attendance" />
+                        <OverviewMetric label="Upcoming or live events" value={displayNumber(eventData.upcoming_or_live)} detail="Published council events" to="/admin/events" />
                     </div>
                     <div className="admin-overview-chart-grid student-chart-grid">
-                        <RegistrationTrend months={months} values={trend} />
+                        <HorizontalBreakdown
+                            eyebrow="COUNCIL PARTICIPATION"
+                            title="Accepted members by event"
+                            rows={events.map((event) => ({ label: event.title, value: Number(event.accepted_response_count || 0), tone: "tone-blue" }))}
+                            emptyLabel="Participation statuses will appear after members receive event invitations."
+                            link={{ to: "/admin/event-responses", label: "View participation" }}
+                        />
                         <HorizontalBreakdown
                             eyebrow="MOST COMMON COURSES"
                             title="Accounts by course"
@@ -425,12 +348,12 @@ function AdminDashboard() {
                                         <h3>{event.title}</h3>
                                         <p>{new Date(event.start_date).toLocaleString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })} · {event.location}</p>
                                     </div>
-                                    <span className="admin-registration-count">{displayNumber(event.registration_count)} / {displayNumber(event.capacity)} registered</span>
+                                    <span className="admin-registration-count">{displayNumber(event.accepted_response_count)} accepted · {displayNumber(event.pending_response_count)} pending</span>
                                 </article>
                             ))}
                         </div>
                     ) : (
-                        <div className="admin-empty-state"><h3>No upcoming events</h3><p>Create an event draft and submit it for council approval before publishing.</p><Link to="/admin/events/create" className="admin-text-link">Create an event</Link></div>
+                        <div className="admin-empty-state"><h3>No upcoming events</h3><p>Approved and scheduled events will appear here for quick review.</p></div>
                     )}
                 </section>
             </main>

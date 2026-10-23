@@ -75,6 +75,10 @@ export async function getPublicEventUpdates() {
     return apiRequest("/events/updates");
 }
 
+export async function getPublicAnnouncements() {
+    return apiRequest("/announcements/list");
+}
+
 export async function getPreviousEvents() {
     return apiRequest("/events/previous");
 }
@@ -84,7 +88,15 @@ export async function getCommitteeDirectory() {
 }
 
 export async function getEvent(id) {
-    return apiRequest(`/events/event?id=${encodeURIComponent(id)}`);
+    return apiRequest(`/events/event?id=${encodeURIComponent(id)}`, { credentials: "include" });
+}
+
+export async function getStudentEventQr(eventId) {
+    return apiRequest(`/attendance/student-event-qr?event_id=${encodeURIComponent(eventId)}`, { credentials: "include" });
+}
+
+export async function respondToStudentEventParticipation(eventId, status) {
+    return apiRequest("/participation/student/respond", { method: "POST", credentials: "include", body: JSON.stringify({ event_id: eventId, status }) });
 }
 
 export async function getEventHighlights(eventId) {
@@ -95,6 +107,10 @@ export async function getAdminEvents() {
     return apiRequest("/admin/events", {
         credentials: "include"
     });
+}
+
+export async function getAdminEvent(id) {
+    return apiRequest(`/admin/events/event?id=${encodeURIComponent(id)}`, { credentials: "include" });
 }
 
 export async function getAdminDashboard() {
@@ -129,14 +145,39 @@ export async function deleteAdminEvent(id) {
     });
 }
 
+export async function retryAdminEventNotifications(eventId) {
+    return apiRequest("/admin/events/notifications/retry", { method: "POST", credentials: "include", body: JSON.stringify({ event_id: eventId }) });
+}
+
+export async function archiveAdminEvent(id) {
+    return apiRequest("/admin/events/archive", {
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ id })
+    });
+}
+
 export async function getAdminRegistrations() {
     return apiRequest("/admin/registrations", {
         credentials: "include"
     });
 }
 
-export async function getAdminAttendance(eventId = "") {
+export async function getAdminEventResponses(eventId = "") {
     const query = eventId ? `?event_id=${encodeURIComponent(eventId)}` : "";
+    return apiRequest(`/admin/event-responses${query}`, { credentials: "include" });
+}
+
+export async function manageAdminEventResponse(eventId, userId, status) {
+    return apiRequest("/admin/event-responses/manage", { method: "POST", credentials: "include", body: JSON.stringify({ event_id: eventId, user_id: userId, status }) });
+}
+
+export async function getAdminAttendance(eventId = "", filters = {}) {
+    const params = new URLSearchParams();
+    if (eventId) params.set("event_id", eventId);
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    const query = params.size ? `?${params.toString()}` : "";
     return apiRequest(`/admin/attendance${query}`, { credentials: "include" });
 }
 
@@ -207,12 +248,12 @@ export async function saveCouncilInventoryItem(item) {
     return apiRequest("/council/inventory/save", { method: "POST", credentials: "include", body: JSON.stringify(item) });
 }
 
-export async function getMyEventAssignments() {
+export async function getMyEventResponses() {
     return apiRequest("/participation/mine", { credentials: "include" });
 }
 
-export async function signUpForEventAssignment(eventId) {
-    return apiRequest("/participation/signup", { method: "POST", credentials: "include", body: JSON.stringify({ event_id: eventId }) });
+export async function respondToEvent(eventId, status) {
+    return apiRequest("/participation/respond", { method: "POST", credentials: "include", body: JSON.stringify({ event_id: eventId, status }) });
 }
 
 export async function getCommitteeWork(committee) {
@@ -276,10 +317,6 @@ export async function markAllNotificationsRead() {
     return apiRequest("/notifications/read-all", { method: "POST", credentials: "include", body: JSON.stringify({}) });
 }
 
-export async function reviewEventAssignment(id, status) {
-    return apiRequest("/admin/participation/review", { method: "POST", credentials: "include", body: JSON.stringify({ id, status }) });
-}
-
 export async function getPublicFinancialReports() {
     return apiRequest("/transparency/reports");
 }
@@ -295,6 +332,26 @@ export async function saveAdminFinancialRecord(record) {
 export async function getAdminHighlights() {
     return apiRequest("/admin/highlights", {
         credentials: "include"
+    });
+}
+
+export async function getAdminAnnouncements() {
+    return apiRequest("/admin/announcements", { credentials: "include" });
+}
+
+export async function saveAdminAnnouncement(announcement) {
+    return apiRequest("/admin/announcements/save", {
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify(announcement)
+    });
+}
+
+export async function archiveAdminAnnouncement(id) {
+    return apiRequest("/admin/announcements/archive", {
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ id })
     });
 }
 
@@ -343,4 +400,17 @@ export async function getCurrentUser() {
 
 export async function updateMyProfile(profile) {
     return apiRequest("/profile/update", { method: "POST", credentials: "include", body: profile });
+}
+
+export async function getMyClassSchedule(academicPeriod = "") {
+    const query = academicPeriod ? `?academic_period=${encodeURIComponent(academicPeriod)}` : "";
+    return apiRequest(`/profile/class-schedule${query}`, { credentials: "include" });
+}
+
+export async function saveMyClassSchedule(schedule) {
+    return apiRequest("/profile/class-schedule", { method: "POST", credentials: "include", body: JSON.stringify(schedule) });
+}
+
+export async function getMyAttendance() {
+    return apiRequest("/attendance/mine", { credentials: "include" });
 }

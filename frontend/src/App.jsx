@@ -3,6 +3,7 @@ import {
     BrowserRouter,
     Routes,
     Route,
+    Navigate,
     Link,
     useLocation
 } from "react-router-dom";
@@ -34,10 +35,11 @@ import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminEvents from "./pages/admin/AdminEvents";
 import CreateEvent from "./pages/admin/CreateEvent";
 import EditEvent from "./pages/admin/EditEvent";
-import Registrations from "./pages/admin/Registrations";
+import EventResponses from "./pages/admin/EventResponses";
 import Attendance from "./pages/admin/Attendance";
 import QRScannerPage from "./pages/admin/QRScannerPage";
 import EventHighlightsManager from "./pages/admin/EventHighlightsManager";
+import AdminAnnouncements from "./pages/admin/AdminAnnouncements";
 import Users from "./pages/admin/Users";
 import CommitteeWorkspace from "./pages/admin/CommitteeWorkspace";
 import AdminFinance from "./pages/admin/AdminFinance";
@@ -157,6 +159,11 @@ function AppRoutes() {
                 />
 
                 <Route
+                    path="/admin/announcements"
+                    element={<WorkspaceAccessGuard><AdminAnnouncements /></WorkspaceAccessGuard>}
+                />
+
+                <Route
                     path="/admin/events/create"
                     element={<WorkspaceAccessGuard><CreateEvent /></WorkspaceAccessGuard>}
                 />
@@ -168,7 +175,12 @@ function AppRoutes() {
 
                 <Route
                     path="/admin/registrations"
-                    element={<WorkspaceAccessGuard><Registrations /></WorkspaceAccessGuard>}
+                    element={<WorkspaceAccessGuard><Navigate to="/admin/event-responses" replace /></WorkspaceAccessGuard>}
+                />
+
+                <Route
+                    path="/admin/event-responses"
+                    element={<WorkspaceAccessGuard><EventResponses /></WorkspaceAccessGuard>}
                 />
 
                 <Route

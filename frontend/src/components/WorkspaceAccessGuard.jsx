@@ -21,57 +21,78 @@ export default function WorkspaceAccessGuard({ children, committeeRoute = false,
 
     useEffect(() => {
         let active = true;
+        let retryTimer;
+        let retryCount = 0;
+        const retryDelays = [1000, 2000, 4000, 8000, 12000, 12000];
         setState("checking");
         setError("");
 
-        getCurrentUser().then(({ user }) => {
-            if (!user) throw new Error("Your sign-in session has expired.");
-            if (!active) return;
-            localStorage.setItem("user", JSON.stringify(user));
-            window.dispatchEvent(new Event("auth-change"));
+        const checkAccess = async () => {
+            try {
+                const { user } = await getCurrentUser();
+                if (!user) throw new Error("Your sign-in session has expired.");
+                if (!active) return;
+                localStorage.setItem("user", JSON.stringify(user));
+                window.dispatchEvent(new Event("auth-change"));
 
-            const executive = hasExecutiveAccess(user);
-            const assignedCommittee = user.committee_assignment;
-            const committeePath = getCommitteeWorkspacePath(user);
+                const executive = hasExecutiveAccess(user);
+                const assignedCommittee = user.committee_assignment;
+                const committeePath = getCommitteeWorkspacePath(user);
 
-            if (councilRoute) {
-                if (executive || (!assignedCommittee && user.council_position)) {
+                if (councilRoute) {
+                    if (executive || (!assignedCommittee && user.council_position)) {
+                        setState("allowed");
+                        return;
+                    }
+                    navigate(assignedCommittee && assignedCommittee !== "executive" ? committeePath : "/", { replace: true });
+                    return;
+                }
+
+                if (committeeRoute) {
+                    if (!committeeLabels[routeCommittee]) {
+                        navigate(executive ? "/admin" : committeePath, { replace: true });
+                        return;
+                    }
+                    if (executive || assignedCommittee === routeCommittee) {
+                        setState("allowed");
+                        return;
+                    }
+                    navigate(assignedCommittee && assignedCommittee !== "executive" ? committeePath : "/", { replace: true });
+                    return;
+                }
+
+                if (executive) {
                     setState("allowed");
                     return;
                 }
-                navigate(assignedCommittee && assignedCommittee !== "executive" ? committeePath : "/", { replace: true });
-                return;
-            }
-
-            if (committeeRoute) {
-                if (!committeeLabels[routeCommittee]) {
-                    navigate(executive ? "/admin" : committeePath, { replace: true });
+                navigate(assignedCommittee && assignedCommittee !== "executive" ? committeePath : user.council_position ? "/my-events" : "/", { replace: true });
+            } catch (requestError) {
+                if (!active) return;
+                if (requestError.status === 401) {
+                    navigate(`/login?next=${encodeURIComponent(location.pathname)}`, { replace: true });
                     return;
                 }
-                if (executive || assignedCommittee === routeCommittee) {
-                    setState("allowed");
+
+                const isDatabaseReconnecting = requestError.code === "DATABASE_UNAVAILABLE" ||
+                    requestError.code === "MONGODB_NETWORK_UNAVAILABLE" ||
+                    requestError.code === "MONGODB_DNS_UNAVAILABLE" ||
+                    requestError.code === "MONGODB_CONNECTION_FAILED";
+                if (isDatabaseReconnecting && retryCount < retryDelays.length) {
+                    retryTimer = window.setTimeout(checkAccess, retryDelays[retryCount++]);
                     return;
                 }
-                navigate(assignedCommittee && assignedCommittee !== "executive" ? committeePath : "/", { replace: true });
-                return;
-            }
 
-            if (executive) {
-                setState("allowed");
-                return;
+                setError(requestError.message || "We could not verify your workspace access.");
+                setState("error");
             }
-            navigate(assignedCommittee && assignedCommittee !== "executive" ? committeePath : user.council_position ? "/my-events" : "/", { replace: true });
-        }).catch((requestError) => {
-            if (!active) return;
-            if (requestError.status === 401) {
-                navigate(`/login?next=${encodeURIComponent(location.pathname)}`, { replace: true });
-                return;
-            }
-            setError(requestError.message || "We could not verify your workspace access.");
-            setState("error");
-        });
+        };
 
-        return () => { active = false; };
+        void checkAccess();
+
+        return () => {
+            active = false;
+            window.clearTimeout(retryTimer);
+        };
     }, [attempt, committee, routeCommittee, committeeRoute, councilRoute, location.pathname, navigate]);
 
     if (state === "allowed") return children;

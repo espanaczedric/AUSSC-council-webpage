@@ -199,7 +199,7 @@ export default function ImageCropDialog({ file, kind, onCancel, onApply }) {
                     </div>
                 </div>
 
-                {processing && <div className="profile-photo-saving-status" role="status"><span className="profile-saving-skeleton" aria-hidden="true" /><span>Saving photo to your profile…</span></div>}
+                {processing && <div className="profile-photo-saving-status" role="status"><span className="profile-saving-skeleton" aria-hidden="true" /><span>Preparing cropped photo…</span></div>}
                 {processError && <p className="profile-form-message is-error" role="alert">{processError}</p>}
 
                 <footer className="profile-crop-actions" aria-busy={processing}>

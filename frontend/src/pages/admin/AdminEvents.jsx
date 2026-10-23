@@ -1,20 +1,22 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import AdminNav from "../../components/AdminNav";
 import EventImage from "../../components/EventImage";
 import { AdminPageSkeleton, SkeletonBlock, SkeletonPageHeading, SkeletonRows } from "../../components/LoadingSkeletons";
-import { deleteAdminEvent, getAdminEvents } from "../../services/api";
+import { archiveAdminEvent, deleteAdminEvent, getAdminEvents, retryAdminEventNotifications } from "../../services/api";
 
 function AdminEvents() {
+    const location = useLocation();
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [query, setQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
-    const [pendingDeleteId, setPendingDeleteId] = useState(null);
-    const [deletingId, setDeletingId] = useState(null);
-    const [notice, setNotice] = useState("");
+    const [pendingAction, setPendingAction] = useState(null);
+    const [actingEventId, setActingEventId] = useState(null);
+    const [notice, setNotice] = useState(location.state?.eventNotice || "");
+    const [noticeIsWarning, setNoticeIsWarning] = useState(Boolean(location.state?.eventNoticeFailed || location.state?.eventNoticeEmpty));
 
     useEffect(() => {
         getAdminEvents()
@@ -37,20 +39,51 @@ function AdminEvents() {
         <section className="admin-list-section"><div className="admin-list-toolbar"><SkeletonBlock className="ui-skeleton-search" /><SkeletonBlock className="ui-skeleton-filter" /></div><SkeletonRows count={5} image /></section>
     </AdminPageSkeleton>;
 
-    async function confirmDelete(event) {
-        setDeletingId(event.id);
+    async function confirmEventAction(event) {
+        if (!pendingAction || pendingAction.id !== event.id) return;
+        const action = pendingAction.action;
+        setActingEventId(event.id);
         setError("");
         setNotice("");
+        setNoticeIsWarning(false);
 
         try {
-            const result = await deleteAdminEvent(event.id);
-            setEvents((current) => current.map((item) => item.id === event.id ? { ...item, publication_status: "archived" } : item));
-            setPendingDeleteId(null);
-            setNotice(`${result.event_title} was archived. Historical records remain available.`);
+            if (action === "delete") {
+                const result = await deleteAdminEvent(event.id);
+                setEvents((current) => current.filter((item) => item.id !== event.id));
+                setNotice(`${result.event_title} was permanently deleted.`);
+            } else {
+                const result = await archiveAdminEvent(event.id);
+                setEvents((current) => current.map((item) => item.id === event.id ? { ...item, publication_status: "archived" } : item));
+                setNotice(`${result.event_title} was archived. Historical records remain available.`);
+            }
+            setPendingAction(null);
         } catch (requestError) {
             setError(requestError.message);
         } finally {
-            setDeletingId(null);
+            setActingEventId(null);
+        }
+    }
+
+    async function retryNotifications(event) {
+        setActingEventId(event.id);
+        setError("");
+        setNotice("");
+        try {
+            const result = await retryAdminEventNotifications(event.id);
+            const notifications = result.notifications || {};
+            setEvents((current) => current.map((item) => item.id === event.id ? {
+                ...item,
+                notification_delivery_status: notifications.failed_count ? "failed" : notifications.recipient_count ? "sent" : "no_recipients",
+                notification_recipient_count: notifications.recipient_count || 0,
+                notification_delivered_count: notifications.delivered_count || 0
+            } : item));
+            setNotice(result.message || "Council notifications retried.");
+            setNoticeIsWarning(Boolean(notifications.failed_count || !notifications.recipient_count));
+        } catch (requestError) {
+            setError(requestError.message || "Council notifications could not be retried.");
+        } finally {
+            setActingEventId(null);
         }
     }
 
@@ -98,7 +131,7 @@ function AdminEvents() {
                     </div>
 
                     {error && <p className="admin-feedback is-error" role="alert">{error}</p>}
-                    {notice && <p className="admin-feedback" role="status">{notice}</p>}
+                    {notice && <p className={`admin-feedback${noticeIsWarning ? " is-warning" : ""}`} role="status">{notice}</p>}
                     {filteredEvents.length ? (
                         <div className="admin-event-list">
                             {filteredEvents.map((event) => (
@@ -124,47 +157,60 @@ function AdminEvents() {
                                         })}</strong>
                                     </div>
                                     <div className="admin-event-capacity">
-                                        <span>REGISTERED</span>
-                                        <strong>{event.registration_count} / {event.capacity}</strong>
+                                        <span>COUNCIL PARTICIPATION</span>
+                                        <strong>{event.accepted_response_count || 0} accepted · {event.pending_response_count || 0} pending · {event.declined_response_count || 0} declined</strong>
                                     </div>
                                     <div className="admin-event-actions">
                                         <Link className="admin-text-link" to={`/admin/events/${event.id}/edit`}>
                                             Edit
                                         </Link>
                                         {(event.publication_status || "published") === "published" && <Link className="admin-text-link" to={`/events/${event.id}`}>View</Link>}
+                                        {event.notification_delivery_status === "failed" && <button className="admin-text-link" type="button" onClick={() => retryNotifications(event)} disabled={actingEventId === event.id}>{actingEventId === event.id ? "Retrying…" : "Retry notifications"}</button>}
                                         {(event.publication_status || "published") !== "archived" && <>
                                         <button
                                             className="admin-text-link is-danger"
                                             type="button"
-                                            aria-expanded={pendingDeleteId === event.id}
-                                            onClick={() => setPendingDeleteId((current) => current === event.id ? null : event.id)}
+                                            aria-expanded={pendingAction?.id === event.id && pendingAction.action === "archive"}
+                                            onClick={() => setPendingAction((current) => current?.id === event.id && current.action === "archive" ? null : { id: event.id, action: "archive" })}
                                         >
                                             Archive
                                         </button>
                                         </>}
+                                        <button
+                                            className="admin-text-link is-danger"
+                                            type="button"
+                                            aria-expanded={pendingAction?.id === event.id && pendingAction.action === "delete"}
+                                            onClick={() => setPendingAction((current) => current?.id === event.id && current.action === "delete" ? null : { id: event.id, action: "delete" })}
+                                        >
+                                            Delete
+                                        </button>
                                     </div>
-                                    {pendingDeleteId === event.id && (
-                                        <div className="admin-delete-confirmation" role="group" aria-label={`Confirm archive of ${event.title}`}>
+                                    {pendingAction?.id === event.id && (
+                                        <div className="admin-delete-confirmation" role="group" aria-label={`Confirm ${pendingAction.action} of ${event.title}`}>
                                             <div>
-                                                <strong>Archive “{event.title}”?</strong>
-                                                <p>It will leave public listings while preserving registrations, attendance, and linked financial history.</p>
+                                                <strong>{pendingAction.action === "delete" ? `Permanently delete “${event.title}”?` : `Archive “${event.title}”?`}</strong>
+                                                <p>{pendingAction.action === "delete"
+                                                    ? "This can only be done when the event has no linked participation or historical records. Events with history must be archived instead."
+                                                    : "It will leave public listings while preserving participation statuses, attendance history, and linked financial records."}</p>
                                             </div>
                                             <div>
                                                 <button
                                                     className="admin-secondary-action"
                                                     type="button"
-                                                    onClick={() => setPendingDeleteId(null)}
-                                                    disabled={deletingId === event.id}
+                                                    onClick={() => setPendingAction(null)}
+                                                    disabled={actingEventId === event.id}
                                                 >
-                                                    Keep event
+                                                    Cancel
                                                 </button>
                                                 <button
                                                     className="admin-delete-confirm-button"
                                                     type="button"
-                                                    onClick={() => confirmDelete(event)}
-                                                    disabled={deletingId === event.id}
+                                                    onClick={() => confirmEventAction(event)}
+                                                    disabled={actingEventId === event.id}
                                                 >
-                                                    {deletingId === event.id ? "Archiving…" : "Archive event"}
+                                                    {actingEventId === event.id
+                                                        ? pendingAction.action === "delete" ? "Deleting…" : "Archiving…"
+                                                        : pendingAction.action === "delete" ? "Delete event" : "Archive event"}
                                                 </button>
                                             </div>
                                         </div>
@@ -177,7 +223,7 @@ function AdminEvents() {
                             <h2>{events.length ? "No matching events" : "No events yet"}</h2>
                             <p>{events.length
                                 ? "Try a different search or status filter."
-                                : "Create your first event to publish it to students."}</p>
+                                : "Create your first event to notify council members and track participation."}</p>
                             {!events.length && (
                                 <Link to="/admin/events/create" className="admin-text-link">Create an event</Link>
                             )}

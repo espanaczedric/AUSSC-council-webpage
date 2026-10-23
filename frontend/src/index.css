@@ -974,6 +974,62 @@ select {
     margin-top: 24px;
 }
 
+.event-council-response,
+.event-student-qr {
+    display: grid;
+    justify-items: start;
+    gap: 12px;
+    margin-top: 20px;
+    padding: clamp(18px, 3vw, 26px);
+    border: 1px solid var(--brand-line);
+    border-radius: 20px;
+    background: #fff;
+}
+
+.event-council-response h3,
+.event-student-qr h3 {
+    margin: 0;
+}
+
+.event-council-response p,
+.event-student-qr p {
+    margin: 0;
+}
+
+.event-council-response-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.event-student-qr-code {
+    display: grid;
+    justify-items: center;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid var(--brand-line);
+    border-radius: 16px;
+    background: #fff;
+}
+
+.event-student-qr-code svg {
+    display: block;
+    width: min(220px, 60vw);
+    height: auto;
+}
+
+.event-student-qr-code span {
+    max-width: 220px;
+    color: var(--brand-charcoal);
+    font-weight: 700;
+    text-align: center;
+}
+
+.event-student-qr-message {
+    color: var(--brand-muted);
+    font-size: 0.9rem;
+}
+
 .event-information {
     display: grid;
     gap: 20px;
@@ -1659,6 +1715,7 @@ select {
 
 .admin-event-actions {
     display: flex;
+    flex-wrap: wrap;
     justify-content: flex-end;
     align-items: center;
     gap: 14px;
@@ -3705,6 +3762,9 @@ select:focus-visible, textarea:focus-visible {
 
 .council-profile-page { width: min(1040px,calc(100% - 48px)); margin: 0 auto; padding: 42px 0 88px; }
 .council-profile-heading { margin: 0 0 25px; }
+.council-profile-heading-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
+.council-profile-heading-actions a { min-height: 40px; text-decoration: none; }
+.council-profile-heading-actions a:focus-visible { outline: 3px solid rgba(245,184,46,.55); outline-offset: 3px; }
 .council-profile-heading .eyebrow { color: #9a6b11; }
 .council-profile-heading h1 { margin: 8px 0; color: var(--ink); font-size: clamp(2.2rem,5vw,3.5rem); letter-spacing: -.055em; line-height: 1.05; }
 .council-profile-heading p, .council-profile-actions p { margin: 0; color: var(--muted); }
@@ -3833,6 +3893,7 @@ select:focus-visible, textarea:focus-visible {
 @media (max-width: 680px) {
     .council-profile-page { width: calc(100% - 32px); padding-top: 28px; }
     .profile-heading-row { align-items: flex-start; }
+    .council-profile-heading-actions { width: 100%; flex-wrap: wrap; }
     .profile-edit-trigger { min-height: 40px; padding: 9px 12px; font-size: .78rem; }
     .council-profile-banner { height: 92px; }
     .council-profile-identity { gap: 12px; margin: -34px 16px 20px; }
@@ -4400,6 +4461,56 @@ select:focus-visible, textarea:focus-visible {
     .member-events-page { width: calc(100% - 32px); padding-top: 26px; }
 }
 
+/* Event responses, weekly class blocks, and assignment availability */
+.council-class-schedule-card,.event-response-manage { min-width: 0; }
+.council-class-schedule-card { scroll-margin-top: 24px; margin: 22px 0; padding: clamp(18px, 2.5vw, 30px); border: 1px solid #dce5ef; border-radius: 20px; background: #fff; box-shadow: 0 12px 32px rgba(20,39,63,.045); }
+.council-class-schedule-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
+.council-class-schedule-card h2 { margin: 5px 0; color: #142b46; }
+.council-class-schedule-card > header p { max-width: 680px; margin: 5px 0 0; color: #718096; }
+.council-class-schedule-card > header > label,.council-class-schedule-row > label { display: grid; gap: 6px; color: #435873; font-size: .78rem; font-weight: 750; }
+.council-class-schedule-card select,.council-class-schedule-card input { width: 100%; min-width: 0; min-height: 42px; padding: 9px 11px; border: 1px solid #d7e0eb; border-radius: 10px; background: #fff; color: #172a42; font: inherit; }
+.council-class-schedule-card > header select { min-width: 170px; }
+.council-class-schedule-list { display: grid; gap: 10px; }
+.council-class-schedule-row { display: grid; grid-template-columns: minmax(130px,.9fr) minmax(110px,.65fr) minmax(110px,.65fr) minmax(190px,1.3fr) auto; align-items: end; gap: 12px; padding: 14px; border: 1px solid #e1e8f0; border-radius: 14px; background: #fbfcfe; }
+.council-class-schedule-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; margin: 14px 0 8px; }
+.council-class-schedule-card form > small { color: #718096; }
+.council-class-schedule-empty { margin: 12px 0; }
+.event-response-overview { display: grid; gap: 18px; }
+.event-response-event-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 18px; border: 1px solid #e0e8f0; border-radius: 16px; background: #fbfcfe; }
+.event-response-event-summary > div:first-child { min-width: 0; }
+.event-response-event-summary > div:first-child > strong,.event-response-event-summary > div:first-child > span { display: block; }
+.event-response-event-summary > div:first-child > strong { color: #142b46; font-size: 1.05rem; }
+.event-response-event-summary > div:first-child > span,.event-response-event-summary p { color: #718096; font-size: .82rem; }
+.event-response-event-summary > div:first-child > small { display: block; margin-top: 6px; color: #8a6415; font-size: .75rem; font-weight: 750; }
+.event-response-event-summary p { margin: 8px 0 0; }
+.event-response-counts { display: flex; flex-wrap: wrap; gap: 8px; }
+.event-response-counts > span { padding: 8px 10px; border-radius: 999px; background: #f0f4f8; color: #54677f; font-size: .75rem; white-space: nowrap; }
+.event-response-counts strong { color: #142b46; }
+.event-response-manage { display: flex; align-items: center; gap: 7px; }
+.event-response-manage select { min-height: 36px; max-width: 124px; padding: 6px 8px; border: 1px solid #d7e0eb; border-radius: 9px; color: #34475f; background: #fff; font: inherit; font-size: .75rem; }
+.event-response-manage .admin-secondary-action { min-height: 36px; padding: 6px 10px; }
+.council-response-card-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.council-response-card-actions .admin-primary-action,.council-response-card-actions .admin-secondary-action { min-height: 38px; padding: 7px 12px; }
+.council-response-list .member-assignment-list article > div:first-child { min-width: 0; }
+.council-response-list .member-assignment-list article small { display: block; margin-top: 5px; color: #718096; }
+.student-attendance-history .my-event-card { padding: 18px; border: 1px solid var(--border); border-radius: 14px; background: #fff; }
+.student-attendance-history .my-event-card h3 { margin: 5px 0; color: #172a42; }
+.student-attendance-history .my-event-card small { color: #8a6b1a; font-weight: 750; }
+.committee-class-conflict-note { grid-column: 1 / -1; margin: -2px 0 2px; padding: 10px 12px; border: 1px solid #d7e8dd; border-radius: 10px; background: #f2faf5; color: #2f694d; font-size: .79rem; }
+.committee-class-conflict-note.is-conflict { border-color: #efd3a6; background: #fff8e9; color: #805609; }
+.committee-class-conflict-note > label { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: #704d0a; font-weight: 750; cursor: pointer; }
+.committee-class-conflict-note > label > input[type="checkbox"] { flex: 0 0 16px; width: 16px; height: 16px; min-height: 16px; margin: 0; accent-color: #bb8410; }
+@media (max-width: 760px) {
+    .council-class-schedule-card > header,.event-response-event-summary { flex-direction: column; }
+    .council-class-schedule-card > header > label,.council-class-schedule-card > header select { width: 100%; }
+    .council-class-schedule-row { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .council-class-schedule-row > label:nth-child(4) { grid-column: 1 / -1; }
+    .council-member-participation-list article { align-items: flex-start; flex-direction: column; }
+    .council-response-card-actions { justify-content: flex-start; }
+    .event-response-manage { align-items: stretch; flex-direction: column; }
+    .event-response-manage select { max-width: none; }
+}
+
 /* Public committee roster and member profiles */
 .committee-directory-card { cursor: pointer; }
 .committee-directory-card:focus-visible { outline: 3px solid rgba(245,184,46,.7); outline-offset: 3px; }
@@ -4464,7 +4575,9 @@ select:focus-visible, textarea:focus-visible {
 }
 
 /* Full-page home skeleton shown while public event data loads. */
-.home-loading-skeleton { overflow: hidden; }
+/* Keep the hero background flowing behind the sticky navbar just like the loaded home page.
+   `overflow: hidden` created a formatting context and clipped the hero's negative top overlap. */
+.home-loading-skeleton { overflow-x: clip; overflow-y: visible; }
 .home-skeleton-dark, .home-skeleton-light { display: block; border-radius: 8px; background-size: 220% 100%; animation: home-skeleton-shimmer 1.35s ease-in-out infinite; }
 .home-skeleton-dark { background-image: linear-gradient(100deg,rgba(255,255,255,.07) 25%,rgba(255,255,255,.18) 45%,rgba(255,255,255,.07) 65%); }
 .home-skeleton-light { background-image: linear-gradient(100deg,#e8edf3 25%,#f8fafc 45%,#e8edf3 65%); }
@@ -4517,7 +4630,6 @@ select:focus-visible, textarea:focus-visible {
 .admin-skeleton-page-eyebrow { width: 180px; height: 10px; }
 .admin-skeleton-page-title { width: min(340px,100%); height: clamp(40px,5vw,58px); border-radius: 12px !important; }
 .admin-skeleton-page-subtitle { width: min(510px,100%); height: 14px; }
-.admin-skeleton-create-action { width: 190px; height: 60px; border-radius: 13px !important; }
 .admin-dashboard-skeleton-section-heading > div { display: grid; justify-items: start; gap: 10px; }
 .admin-skeleton-section-eyebrow { width: 145px; height: 9px; }
 .admin-skeleton-section-title { width: min(320px,100%); height: 30px; border-radius: 10px !important; }
@@ -4653,7 +4765,6 @@ select:focus-visible, textarea:focus-visible {
     .home-skeleton-transparency-link { grid-column: 2; }
     .home-skeleton-previous-image { min-height: 230px; }
     .admin-dashboard-skeleton .admin-page-heading { align-items: center; }
-    .admin-skeleton-create-action { width: 150px; height: 50px; }
     .admin-skeleton-graph { min-height: 150px; gap: 8px; padding-left: 24px; }
     .ui-page-skeleton { width: calc(100% - 32px); }
     .ui-skeleton-event-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 11px; }
@@ -4720,13 +4831,58 @@ select:focus-visible, textarea:focus-visible {
 .update-type-pill { display: inline-flex; align-items: center; min-height: 26px; padding: 4px 9px; border-radius: 999px; background: #eef4fb; color: #26496d; font-size: .69rem; font-weight: 800; letter-spacing: .015em; }
 .update-type-pill.is-details_updated { background: #fff4d8; color: #79560c; }
 .update-type-pill.is-event_cancelled { background: #fff0ee; color: #a5382c; }
+.update-type-pill.is-council_announcement { background: #fff4d8; color: #79560c; }
 .update-item-meta time { color: var(--muted); font-size: .78rem; }
 .updates-feed { border-top: 1px solid var(--border); }
+.updates-announcement-artwork { display: grid; min-height: 310px; place-content: center; gap: 12px; background: radial-gradient(circle at 50% 42%,rgba(245,190,21,.16),transparent 44%),linear-gradient(145deg,#102943,#071629); color: #f5c342; text-align: center; }
+.updates-announcement-artwork span { font-size: .73rem; font-weight: 800; letter-spacing: .18em; }
+.updates-announcement-artwork strong { font-size: clamp(1.8rem,4vw,3rem); letter-spacing: .14em; }
+.updates-featured.is-council-announcement { grid-template-columns: minmax(220px,.65fr) minmax(0,1.35fr); }
+.updates-featured.is-council-announcement .updates-featured-copy { padding: clamp(22px,4vw,38px); }
+.updates-featured.is-council-announcement .updates-featured-copy > p,
+.update-item.is-council-announcement .update-item-content > p { white-space: pre-line; }
+.updates-featured.is-council-announcement .update-item-footer,
+.update-item.is-council-announcement .update-item-footer { color: var(--muted); }
 .updates-skeleton .ui-skeleton-row { min-height: 126px; }
+
+.announcement-admin-page { padding-bottom: 70px; }
+.announcement-admin-compose,.announcement-admin-library { margin-bottom: 24px; padding: clamp(18px,3vw,28px); border: 1px solid var(--border); border-radius: 18px; background: #fff; box-shadow: var(--shadow-card); }
+.announcement-admin-compose .admin-section-heading,.announcement-admin-library .admin-section-heading { margin-bottom: 20px; }
+.announcement-admin-compose .admin-section-heading span,.announcement-admin-library .admin-section-heading span { color: #9a7018; font-size: .68rem; font-weight: 850; letter-spacing: .12em; }
+.announcement-admin-compose .admin-section-heading h2,.announcement-admin-library .admin-section-heading h2 { margin: 4px 0 0; color: var(--ink); font-size: 1.4rem; }
+.announcement-admin-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.announcement-admin-form label { display: grid; min-width: 0; gap: 7px; color: #475a73; font-size: .82rem; font-weight: 750; }
+.announcement-admin-form input,.announcement-admin-form select,.announcement-admin-form textarea { width: 100%; min-height: 46px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 11px; background: #fff; color: var(--ink); font: inherit; font-size: .9rem; }
+.announcement-admin-form textarea { min-height: 170px; resize: vertical; line-height: 1.6; }
+.announcement-admin-form input:focus,.announcement-admin-form select:focus,.announcement-admin-form textarea:focus { border-color: var(--accent); outline: 0; box-shadow: 0 0 0 3px rgba(245,190,21,.18); }
+.announcement-admin-content-field,.announcement-admin-note,.announcement-admin-actions { grid-column: 1 / -1; }
+.announcement-admin-note { margin: -4px 0 0; color: var(--muted); font-size: .78rem; line-height: 1.55; }
+.announcement-admin-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.announcement-admin-actions .admin-primary-action,.announcement-admin-actions .admin-secondary-action { min-height: 42px; padding: 10px 15px; }
+.announcement-admin-list { display: grid; gap: 12px; }
+.announcement-admin-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; padding: 18px; border: 1px solid var(--border); border-radius: 14px; background: #fff; }
+.announcement-admin-card-copy { min-width: 0; }
+.announcement-admin-card-copy > div { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.announcement-admin-category { color: #7b8798; font-size: .73rem; font-weight: 700; }
+.announcement-admin-card h3 { margin: 10px 0 6px; color: var(--ink); font-size: 1.08rem; }
+.announcement-admin-card p { margin: 0 0 10px; color: var(--muted); font-size: .86rem; line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; }
+.announcement-admin-card small { color: #8591a1; font-size: .72rem; }
+.announcement-admin-card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
+.announcement-admin-card-actions > button.admin-text-link:not(.is-danger) { border: 0; padding: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }
+.announcement-admin-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; color: #66768b; font-size: .74rem; }
+.announcement-admin-form-skeleton,.announcement-admin-list-skeleton { display: grid; gap: 14px; margin-bottom: 24px; padding: 26px; border: 1px solid var(--border); border-radius: 18px; background: #fff; }
+.announcement-admin-form-skeleton .ui-skeleton-form-field { max-width: 100%; }
+.announcement-admin-form-skeleton .ui-skeleton-form-area { height: 170px; }
 @media (max-width: 768px) {
     .updates-featured { grid-template-columns: 1fr; }
     .updates-featured-image { height: 230px; min-height: 230px; }
+    .updates-announcement-artwork { min-height: 190px; }
+    .updates-featured.is-council-announcement { grid-template-columns: 1fr; }
     .updates-featured-copy { padding: 22px; }
+    .announcement-admin-form { grid-template-columns: 1fr; }
+    .announcement-admin-content-field,.announcement-admin-note,.announcement-admin-actions { grid-column: auto; }
+    .announcement-admin-card { flex-direction: column; }
+    .announcement-admin-card-actions { justify-content: flex-start; }
 }
 @media (max-width: 480px) {
     .events-updates-link { align-items: flex-start; }
@@ -6749,4 +6905,148 @@ canvas {
         padding-inline: 7px;
         font-size: .64rem;
     }
+}
+
+/* Council-first event participation and QR attendance */
+.attendance-admin-page .attendance-summary { grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: stretch; }
+.attendance-summary > div { min-width: 0; }
+.attendance-summary small { color: var(--muted, #718096); font-size: .72rem; line-height: 1.4; }
+.attendance-list-toolbar { grid-template-columns: minmax(150px, .85fr) minmax(130px, .65fr) minmax(130px, .65fr) minmax(240px, 1.6fr); }
+.attendance-filter-caption { color: #63758d; margin: -2px 0 16px; }
+.attendance-category-section, .attendance-analytics { margin: 22px 0; padding: clamp(16px, 2.2vw, 26px); border: 1px solid #dce5ef; border-radius: 20px; background: #fff; box-shadow: 0 12px 32px rgba(20, 39, 63, .045); }
+.attendance-category-section > header, .attendance-analytics > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.attendance-category-section > header > div > span, .attendance-analytics > header > span { color: #997018; font-size: .68rem; font-weight: 850; letter-spacing: .12em; }
+.attendance-category-section h2, .attendance-analytics h2 { margin: 5px 0; color: #142b46; }
+.attendance-category-section header p, .attendance-analytics header p { margin: 5px 0 0; color: #718096; }
+.attendance-category-section > header > strong { color: #40546e; white-space: nowrap; }
+.attendance-student-section { padding: 0; overflow: hidden; }
+.attendance-student-section summary { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: clamp(16px, 2.2vw, 26px); cursor: pointer; list-style: none; color: #142b46; }
+.attendance-student-section summary::-webkit-details-marker { display: none; }
+.attendance-student-section summary > span:first-child { display: grid; gap: 4px; }
+.attendance-student-section summary small { color: #997018; font-size: .67rem; font-weight: 850; letter-spacing: .12em; }
+.attendance-student-section summary strong { font-size: 1.08rem; }
+.attendance-student-section summary > span:last-child { color: #536984; font-weight: 750; }
+.attendance-section-description { margin: 0; padding: 0 24px 15px; color: #718096; }
+.attendance-student-section .admin-table-wrap, .attendance-student-section .attendance-pagination { margin: 0 24px 20px; }
+.attendance-table { min-width: 880px; }
+.attendance-table td small { display: block; margin-top: 3px; color: #77879a; }
+.attendance-state.is-present { color: #126248; background: #e3f5ed; }
+.attendance-state.is-complete { color: #53647a; background: #edf1f5; }
+.attendance-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 12px; color: #697b91; font-size: .8rem; }
+.attendance-pagination button { min-height: 36px; padding: 7px 12px; border: 1px solid #d9e2ec; border-radius: 9px; color: #142b46; background: white; font: inherit; font-weight: 700; cursor: pointer; }
+.attendance-pagination button:disabled { opacity: .5; cursor: not-allowed; }
+.attendance-analytics-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.attendance-analytics-group { min-width: 0; padding: 15px; border: 1px solid #e0e8f0; border-radius: 14px; }
+.attendance-analytics-group h3 { margin: 0 0 10px; color: #334b67; font-size: .9rem; }
+.attendance-analytics-group > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.attendance-analytics-group > div > span { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 999px; background: #f3f6fa; color: #536984; font-size: .75rem; }
+.attendance-analytics-group > div > span strong { color: #142b46; }
+.admin-form-note { color: #718096; font-size: .82rem; }
+.event-invite-audiences { display: grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap: 8px; margin-top: 4px; }
+.event-invite-audiences > label { display: flex; align-items: center; gap: 9px; min-height: 44px; margin: 0; padding: 9px 11px; border: 1px solid #dce5ef; border-radius: 11px; background: #fbfcfe; color: #314760; font-size: .82rem; font-weight: 700; cursor: pointer; }
+.event-invite-audiences > label.is-selected { border-color: #e3ba55; background: #fff9e9; }
+.event-invite-audiences > label > input[type="checkbox"] { flex: 0 0 17px; width: 17px; min-height: 17px; height: 17px; margin: 0; accent-color: #d7a21c; }
+.event-invite-audiences > label > span { margin: 0; color: inherit; font-size: inherit; font-weight: inherit; }
+.council-member-pass-card, .council-member-attendance-card, .council-member-participation-card { margin: 22px 0; padding: clamp(18px, 2.5vw, 30px); border: 1px solid #dce5ef; border-radius: 20px; background: #fff; box-shadow: 0 12px 32px rgba(20, 39, 63, .045); }
+.council-member-pass-card h2, .council-member-attendance-card h2, .council-member-participation-card h2 { margin: 5px 0; color: #142b46; }
+.council-member-pass-card > div:first-child p, .council-member-attendance-card > div:first-child p, .council-member-participation-card header p { color: #718096; }
+.council-member-participation-card > header { margin: 0 0 18px; }
+.council-member-participation-card header p { max-width: 680px; margin: 5px 0 0; }
+.council-member-participation-list { display: grid; gap: 10px; }
+.council-member-participation-list article { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid #e0e8f0; border-radius: 13px; }
+.council-member-participation-list article > div { min-width: 0; }
+.council-member-participation-list h3 { margin: 8px 0 3px; color: #172a42; font-size: .95rem; }
+.council-member-participation-list p { margin: 0; color: #718096; font-size: .82rem; }
+.council-member-participation-list article > a,.council-member-participation-link { flex: 0 0 auto; color: #8a5e0b; font-size: .84rem; font-weight: 750; text-decoration: none; }
+.council-member-participation-list article > a:hover,.council-member-participation-link:hover { text-decoration: underline; }
+.council-member-participation-empty { padding: 16px; border: 1px dashed #dce5ef; border-radius: 14px; background: #fbfcfe; }
+.council-member-participation-empty h3 { margin: 0 0 5px; color: #172a42; font-size: .95rem; }
+.council-member-participation-empty p,.council-profile-section-status { margin: 0; color: #718096; font-size: .85rem; }
+.council-member-participation-link { display: inline-flex; margin-top: 16px; }
+.council-member-pass-content { display: grid; grid-template-columns: 220px minmax(0, 1fr); align-items: center; gap: 24px; margin-top: 20px; }
+.council-member-pass-qr { display: grid; place-items: center; padding: 15px; border: 1px solid #e0e8f0; border-radius: 16px; background: #fff; }
+.council-member-pass-content > div:last-child { display: grid; gap: 10px; color: #435873; }
+.council-member-pass-content > div:last-child > strong { color: #142b46; font-size: 1.12rem; }
+.council-member-pass-content > div:last-child > span { color: #718096; }
+.council-member-pass-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 5px; }
+.council-member-attendance-list { display: grid; gap: 10px; margin-top: 18px; }
+.council-member-attendance-list article { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid #e0e8f0; border-radius: 13px; }
+.council-member-attendance-list article > div { display: grid; gap: 4px; }
+.council-member-attendance-list article > div > strong { color: #142b46; }
+.council-member-attendance-list article > div > span, .council-member-attendance-list article > div > small { color: #718096; }
+.council-member-attendance-empty { padding: 16px; border: 1px dashed #d8e2ed; border-radius: 12px; color: #718096; }
+@media (max-width: 980px) {
+    .attendance-admin-page .attendance-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .attendance-list-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .attendance-analytics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+    .attendance-admin-page .attendance-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .attendance-list-toolbar { grid-template-columns: 1fr; }
+    .attendance-category-section > header { align-items: flex-start; }
+    .attendance-student-section summary { align-items: flex-start; flex-direction: column; }
+    .attendance-student-section .admin-table-wrap, .attendance-student-section .attendance-pagination { margin-right: 14px; margin-left: 14px; }
+    .attendance-section-description { padding-right: 14px; padding-left: 14px; }
+    .attendance-analytics-grid { grid-template-columns: 1fr; }
+    .attendance-pagination { justify-content: space-between; gap: 7px; }
+    .attendance-pagination span { font-size: .72rem; text-align: center; }
+    .council-member-pass-content { grid-template-columns: 1fr; justify-items: start; }
+    .council-member-pass-qr svg { width: min(190px, 56vw); height: auto; }
+    .council-member-attendance-list article { align-items: flex-start; flex-direction: column; }
+    .council-member-pass-actions { width: 100%; }
+}
+
+
+/* Council identity pass: self-hosted typefaces keep the profile and exported card consistent. */
+@font-face { font-family: "Poppins"; src: url("/assets/fonts/Poppins-Regular.ttf") format("truetype"); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: "Poppins"; src: url("/assets/fonts/Poppins-Medium.ttf") format("truetype"); font-style: normal; font-weight: 500; font-display: swap; }
+@font-face { font-family: "Poppins"; src: url("/assets/fonts/Poppins-Bold.ttf") format("truetype"); font-style: normal; font-weight: 700; font-display: swap; }
+@font-face { font-family: "Montserrat"; src: url("/assets/fonts/Montserrat-Regular.otf") format("opentype"); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: "Montserrat"; src: url("/assets/fonts/Montserrat-Medium.otf") format("opentype"); font-style: normal; font-weight: 500; font-display: swap; }
+@font-face { font-family: "Montserrat"; src: url("/assets/fonts/Montserrat-Bold.otf") format("opentype"); font-style: normal; font-weight: 700; font-display: swap; }
+
+.council-member-pass-card { overflow: hidden; padding: clamp(18px, 3vw, 30px); }
+.council-member-pass-intro { margin-bottom: 22px; }
+.council-member-pass-intro h2 { margin: 5px 0; color: #142b46; font-family: "Montserrat", "Poppins", sans-serif; font-weight: 800; letter-spacing: -.035em; }
+.council-member-pass-intro p { max-width: 760px; margin: 6px 0 0; color: #718096; }
+.council-member-pass-artwork { position: relative; isolation: isolate; display: flex; flex-direction: column; gap: clamp(24px, 3vw, 36px); width: min(100%, 760px); min-height: 760px; margin: 0 auto; overflow: hidden; padding: clamp(24px, 4vw, 44px); border: 1px solid rgba(247, 185, 35, .65); border-radius: 28px; background: radial-gradient(circle at 92% 7%, rgba(247, 185, 35, .18), transparent 26%), linear-gradient(145deg, #132f4d 0%, #0b1f34 53%, #071629 100%); box-shadow: 0 24px 60px rgba(7, 22, 41, .22); color: #fff; font-family: "Poppins", sans-serif; }
+.council-member-pass-artwork::after { position: absolute; z-index: -1; right: -168px; bottom: 76px; width: 370px; height: 370px; border: 1px solid rgba(247, 185, 35, .28); border-radius: 50%; content: ""; box-shadow: 0 0 0 28px rgba(255,255,255,.018), 0 0 0 58px rgba(255,255,255,.014); }
+.council-member-pass-brand { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 56px; padding-bottom: 20px; border-bottom: 1px solid rgba(222, 233, 245, .2); }
+.council-member-pass-brand img { width: min(360px, 75%); height: auto; object-fit: contain; }
+.council-member-pass-brand > span { color: #f7b923; font-family: "Montserrat", sans-serif; font-size: .67rem; font-weight: 800; letter-spacing: .12em; line-height: 1.45; text-align: right; }
+.council-member-pass-identity { display: grid; grid-template-columns: 1fr; justify-items: center; padding: clamp(24px, 4vw, 40px) 0; border-bottom: 1px solid rgba(222, 233, 245, .2); text-align: center; }
+
+.council-member-pass-nameplate > span, .council-member-pass-code-copy > span { color: #f7b923; font-family: "Montserrat", sans-serif; font-size: .68rem; font-weight: 800; letter-spacing: .16em; }
+.council-member-pass-nameplate { max-width: 600px; }
+.council-member-pass-nameplate h3 { margin: 12px 0 7px; color: #fff; font-family: "Montserrat", "Poppins", sans-serif; font-size: clamp(2rem, 5vw, 3rem); font-weight: 800; letter-spacing: -.045em; line-height: 1.03; overflow-wrap: anywhere; }
+.council-member-pass-nameplate p { margin: 0; color: #d2ddea; font-family: "Poppins", sans-serif; font-size: clamp(.9rem, 2vw, 1.05rem); font-weight: 500; }
+.council-member-pass-code-row { display: grid; grid-template-columns: 1fr; justify-items: center; gap: 22px; }
+.council-member-pass-code { display: grid; width: min(248px, 100%); aspect-ratio: 1; place-items: center; padding: 15px; border: 1px solid rgba(255, 255, 255, .7); border-radius: 20px; background: #fff; box-shadow: 0 12px 32px rgba(0, 0, 0, .2); }
+.council-member-pass-code svg { display: block; width: 100%; height: auto; }
+.council-member-pass-code-copy { display: grid; justify-items: center; gap: 12px; text-align: center; }
+.council-member-pass-code-copy h4 { color: #fff; font-family: "Montserrat", "Poppins", sans-serif; font-size: clamp(1.55rem, 3vw, 2.1rem); font-weight: 800; letter-spacing: -.035em; line-height: 1.12; }
+.council-member-pass-code-copy p { max-width: 420px; margin: 0; color: #c7d4e3; font-size: .9rem; line-height: 1.65; }
+.council-member-pass-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: auto; padding-top: 18px; border-top: 1px solid rgba(222, 233, 245, .2); }
+.council-member-pass-footer strong { color: #fff; font-family: "Montserrat", sans-serif; font-size: .75rem; font-weight: 800; letter-spacing: .18em; }
+.council-member-pass-footer span { color: #aebdd0; font-size: .76rem; text-align: right; }
+.council-member-pass-actions { display: flex; justify-content: center; margin-top: 18px; }
+@media (max-width: 640px) {
+    .council-member-pass-card { padding: 18px 14px; }
+    .council-member-pass-artwork { min-height: auto; gap: 24px; padding: 22px 18px; border-radius: 21px; }
+    .council-member-pass-brand { min-height: 46px; padding-bottom: 15px; }
+    .council-member-pass-brand img { width: min(260px, 72%); }
+    .council-member-pass-brand > span { font-size: .54rem; letter-spacing: .1em; }
+    .council-member-pass-identity { padding: 22px 0; }
+    .council-member-pass-nameplate > span, .council-member-pass-code-copy > span { font-size: .58rem; letter-spacing: .11em; }
+    .council-member-pass-nameplate h3 { margin: 8px 0 6px; font-size: clamp(1.55rem, 7vw, 2.2rem); }
+    .council-member-pass-nameplate p { font-size: .8rem; }
+    .council-member-pass-code-row { gap: 18px; }
+    .council-member-pass-code { width: min(220px, 72vw); }
+    .council-member-pass-code-copy { justify-items: center; text-align: center; }
+    .council-member-pass-code-copy h4 { font-size: 1.55rem; }
+    .council-member-pass-code-copy p { max-width: 34ch; font-size: .8rem; }
+    .council-member-pass-footer { align-items: flex-start; flex-direction: column; gap: 5px; }
+    .council-member-pass-footer strong { font-size: .62rem; letter-spacing: .12em; }
+    .council-member-pass-footer span { font-size: .7rem; text-align: left; }
+    .council-member-pass-actions .admin-primary-action { width: 100%; }
 }

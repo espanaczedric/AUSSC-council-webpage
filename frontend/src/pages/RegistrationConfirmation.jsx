@@ -5,9 +5,18 @@ import {
 } from "react-router-dom";
 
 import Navbar from "../components/Navbar";
-import RegistrationQR from "../components/RegistrationQR";
 import { PublicPageSkeleton, SkeletonBlock } from "../components/LoadingSkeletons";
 import { apiRequest } from "../services/api";
+
+function attendanceDuration(attendance) {
+    if (!attendance?.time_in) return "—";
+    if (!attendance.time_out) return "In progress · check-out not recorded";
+    const start = new Date(attendance.time_in.replace(" ", "T")).getTime();
+    const end = new Date(attendance.time_out.replace(" ", "T")).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return "—";
+    const minutes = Math.max(0, Math.round((end - start) / 60000));
+    return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
 
 function RegistrationConfirmation() {
 
@@ -26,22 +35,13 @@ function RegistrationConfirmation() {
 
     const [downloadMessage, setDownloadMessage] =
         useState("");
-
-    async function downloadRegistrationPass() {
+    async function downloadHistoricalRecord() {
         setDownloading(true);
         setDownloadMessage("");
 
         try {
-            const [{ jsPDF }, { default: QRCode }] = await Promise.all([
-                import("jspdf"),
-                import("qrcode")
-            ]);
+            const { jsPDF } = await import("jspdf");
             const pdf = new jsPDF({ unit: "mm", format: "a4" });
-            const qrImage = await QRCode.toDataURL(registration.registration_code, {
-                errorCorrectionLevel: "H",
-                margin: 1,
-                width: 320
-            });
 
             try {
                 const logoResponse = await fetch("/assets/aussc-header-pdf.png");
@@ -68,7 +68,7 @@ function RegistrationConfirmation() {
             pdf.setTextColor(13, 6, 105);
             pdf.setFont("helvetica", "bold");
             pdf.setFontSize(10);
-            pdf.text("EVENT REGISTRATION FORM", 22, 52);
+            pdf.text("HISTORICAL EVENT PARTICIPATION RECORD", 22, 52);
 
             pdf.setTextColor(22, 16, 65);
             pdf.setFontSize(21);
@@ -117,6 +117,7 @@ function RegistrationConfirmation() {
             pdf.text("STUDENT ID", 27, cardY + 34);
             pdf.text("EMAIL", 27, cardY + 53);
             pdf.text("PROGRAM / YEAR", 27, cardY + 72);
+            pdf.text("CONTACT", 27, cardY + 88);
 
             pdf.setTextColor(22, 16, 65);
             pdf.setFont("helvetica", "bold");
@@ -132,37 +133,32 @@ function RegistrationConfirmation() {
                 27,
                 cardY + 79
             );
+            pdf.setFontSize(9);
+            pdf.text(registration.contact || "—", 27, cardY + 94);
 
-            pdf.addImage(qrImage, "PNG", 137, cardY + 9, 45, 45);
             pdf.setTextColor(13, 6, 105);
             pdf.setFont("helvetica", "bold");
-            pdf.setFontSize(8);
-            pdf.text("REGISTRATION CODE", 136, cardY + 62);
+            pdf.setFontSize(9);
+            pdf.text("HISTORICAL RECORD", 137, cardY + 20);
             pdf.setFont("helvetica", "normal");
             pdf.setFontSize(8);
-            pdf.text(pdf.splitTextToSize(registration.registration_code, 48), 136, cardY + 68);
-            pdf.setFillColor(245, 190, 21);
-            pdf.roundedRect(136, cardY + 79, 47, 8, 1, 1, "F");
-            pdf.setTextColor(22, 16, 65);
-            pdf.setFont("helvetica", "bold");
-            pdf.setFontSize(8);
-            pdf.text((registration.status || "registered").toUpperCase(), 159.5, cardY + 84.5, { align: "center" });
+            pdf.text(pdf.splitTextToSize("Student attendance QR codes are generated separately for each event.", 48), 137, cardY + 29);
 
             pdf.setFillColor(22, 16, 65);
             pdf.rect(0, 266, 210, 31, "F");
             pdf.setTextColor(255, 255, 255);
             pdf.setFont("helvetica", "bold");
             pdf.setFontSize(10);
-            pdf.text("PRESENT THIS QR CODE AT EVENT CHECK-IN", 22, 278);
+            pdf.text("STUDENT ATTENDANCE QR CODES ARE EVENT-SPECIFIC", 22, 278);
             pdf.setFont("helvetica", "normal");
             pdf.setFontSize(8);
-            pdf.text("This pass is valid for the attendee and event listed above.", 22, 286);
+            pdf.text("Generate the QR from the event page. Participation and attendance remain separate.", 22, 286);
 
-            pdf.save(`AUSSC-registration-form-${registration.registration_code}.pdf`);
-            setDownloadMessage("Registration form downloaded.");
+            pdf.save(`AUSSC-event-history-${registration.registration_code}.pdf`);
+            setDownloadMessage("Historical event record downloaded.");
         } catch (error) {
-            console.error("Failed to create registration pass:", error);
-            setDownloadMessage("The registration pass could not be downloaded. Please try again.");
+            console.error("Failed to create historical event record:", error);
+            setDownloadMessage("The event record could not be downloaded. Please try again.");
         } finally {
             setDownloading(false);
         }
@@ -175,9 +171,7 @@ function RegistrationConfirmation() {
 
             try {
 
-                const data = await apiRequest(`/registration/by-code?code=${encodeURIComponent(code)}`, {
-                    credentials: "include"
-                });
+            const data = await apiRequest(`/registration/by-code?code=${encodeURIComponent(code)}`, { credentials: "include" });
 
 
                 if (data.success) {
@@ -187,7 +181,7 @@ function RegistrationConfirmation() {
                     );
 
                 } else {
-                    setLoadError(data.message || "This registration could not be found.");
+                    setLoadError(data.message || "This historical event record could not be found.");
 
                 }
 
@@ -227,11 +221,9 @@ function RegistrationConfirmation() {
 
                 <main className="event-not-found">
 
-                    <h1>
-                        Registration Not Found
-                    </h1>
+                    <h1>Historical Record Not Found</h1>
 
-                    <p role="alert">{loadError || "This registration may have expired or the link is incorrect."}</p>
+                    <p role="alert">{loadError || "This historical event record is unavailable or the link is incorrect."}</p>
 
                     <Link to="/events">
                         Back to Events
@@ -257,20 +249,20 @@ function RegistrationConfirmation() {
                     <div className="confirmation-header">
 
                         <span>
-                            REGISTRATION CONFIRMED
+                            HISTORICAL STUDENT EVENT RECORD
                         </span>
 
                         <h1>
-                            You're In!
+                            Past participation record
                         </h1>
 
                         <p>
-                            Your registration for
+                            A saved student event record for
                             <strong>
                                 {" "}
                                 {registration.title}
                             </strong>
-                            {" "}has been confirmed.
+                            {" "}from the former registration workflow. New event attendance is recorded separately.
                         </p>
 
                     </div>
@@ -323,21 +315,21 @@ function RegistrationConfirmation() {
                             </strong>
                         </div>
 
+                        <div>
+                            <small>ATTENDANCE</small>
+                            <strong>{registration.attendance?.time_out ? "Checked out" : registration.attendance?.time_in ? "Currently checked in" : "Not checked in"}</strong>
+                        </div>
+                        {registration.attendance?.time_in && <div><small>SESSION DURATION</small><strong>{attendanceDuration(registration.attendance)}</strong></div>}
+
+                        {registration.attendance?.time_in && <div><small>TIME IN</small><strong>{new Date(registration.attendance.time_in.replace(" ", "T")).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}</strong></div>}
+                        {registration.attendance?.time_out && <div><small>TIME OUT</small><strong>{new Date(registration.attendance.time_out.replace(" ", "T")).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}</strong></div>}
+
                     </div>
-
-
-                    <RegistrationQR
-                        registrationCode={
-                            registration.registration_code
-                        }
-                    />
 
 
                     <p className="qr-instruction">
 
-                        Save this QR code and present it
-                        at the event entrance for
-                        attendance verification.
+                        This is a historical registration record. Students generate a separate attendance QR from each event page; scanning it records attendance and does not create council participation.
 
                     </p>
 
@@ -347,10 +339,10 @@ function RegistrationConfirmation() {
                         <button
                             type="button"
                             className="register-button"
-                            onClick={downloadRegistrationPass}
+                            onClick={downloadHistoricalRecord}
                             disabled={downloading}
                         >
-                            {downloading ? "Preparing form…" : "Download registration form"}
+                            {downloading ? "Preparing record…" : "Download event record"}
                         </button>
 
                         <Link

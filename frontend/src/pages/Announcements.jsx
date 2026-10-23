@@ -4,14 +4,15 @@ import { Link } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import EventImage from "../components/EventImage";
 import { SkeletonRows } from "../components/LoadingSkeletons";
-import { getPublicEventUpdates } from "../services/api";
+import { getPublicAnnouncements, getPublicEventUpdates } from "../services/api";
 
 const RECENT_WINDOW_DAYS = 45;
 const announcementFilters = [
     { id: "all", label: "All recent notices" },
     { id: "newly_published", label: "New events" },
     { id: "details_updated", label: "Event changes" },
-    { id: "event_cancelled", label: "Cancellations" }
+    { id: "event_cancelled", label: "Cancellations" },
+    { id: "council_announcement", label: "Council announcements" }
 ];
 
 function parseTimestamp(value) {
@@ -69,11 +70,13 @@ function formatPostedDay(value) {
 
 function noticeLabel(type) {
     if (type === "event_cancelled") return "Event cancelled";
+    if (type === "council_announcement") return "Council announcement";
     return type === "details_updated" ? "Event details updated" : "New event announced";
 }
 
 function Announcements() {
     const [events, setEvents] = useState([]);
+    const [councilNotices, setCouncilNotices] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [query, setQuery] = useState("");
@@ -81,8 +84,13 @@ function Announcements() {
 
     useEffect(() => {
         let active = true;
-        getPublicEventUpdates()
-            .then((data) => { if (active) setEvents(data.updates || []); })
+        Promise.all([getPublicEventUpdates(), getPublicAnnouncements()])
+            .then(([eventData, announcementData]) => {
+                if (active) {
+                    setEvents(eventData.updates || []);
+                    setCouncilNotices(announcementData.announcements || []);
+                }
+            })
             .catch((requestError) => { if (active) setError(requestError.message || "Updates are temporarily unavailable."); })
             .finally(() => { if (active) setLoading(false); });
         return () => { active = false; };
@@ -90,17 +98,25 @@ function Announcements() {
 
     const recentAnnouncements = useMemo(() => {
         const cutoff = Date.now() - RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-        return events
-            .map((event) => ({ ...event, announcement: announcementFor(event) }))
-            .filter((event) => event.announcement && event.announcement.date.getTime() >= cutoff)
+        const eventNotices = events.map((event) => ({ ...event, kind: "event", announcement: announcementFor(event) }));
+        const standaloneNotices = councilNotices.map((notice) => ({
+            ...notice,
+            kind: "council",
+            announcement: {
+                date: parseTimestamp(notice.public_updated_at || notice.published_at || notice.created_at),
+                type: "council_announcement"
+            }
+        }));
+        return [...eventNotices, ...standaloneNotices]
+            .filter((event) => event.announcement?.date && event.announcement.date.getTime() >= cutoff)
             .sort((first, second) => second.announcement.date - first.announcement.date);
-    }, [events]);
+    }, [events, councilNotices]);
 
     const visibleAnnouncements = useMemo(() => {
         const normalized = query.trim().toLowerCase();
         return recentAnnouncements.filter((event) => {
             const matchesFilter = activeFilter === "all" || event.announcement.type === activeFilter;
-            const matchesQuery = !normalized || `${event.title || ""} ${event.location || ""} ${event.description || ""}`.toLowerCase().includes(normalized);
+            const matchesQuery = !normalized || `${event.title || ""} ${event.location || ""} ${event.description || event.content || ""} ${event.category || ""}`.toLowerCase().includes(normalized);
             return matchesFilter && matchesQuery;
         });
     }, [recentAnnouncements, query, activeFilter]);
@@ -116,7 +132,7 @@ function Announcements() {
                     <div>
                         <span className="eyebrow">Official council notices</span>
                         <h1>What’s new on campus.</h1>
-                        <p>Recent event announcements, important changes, and cancellations. Use the event calendar to browse every published event.</p>
+                        <p>Official council announcements, new event notices, important changes, and cancellations. Browse the event calendar for every published event.</p>
                         <Link className="updates-hero-link" to="/events">Browse the full event calendar <span aria-hidden="true">→</span></Link>
                     </div>
                     <div className="updates-hero-stamp" aria-hidden="true"><span>NEWS</span><i>AU · SSC</i></div>
@@ -144,32 +160,38 @@ function Announcements() {
                         <div className="event-empty-state" role="alert"><h2>Updates aren’t available right now.</h2><p>{error}</p></div>
                     ) : featuredAnnouncement ? (
                         <>
-                            <article className="updates-featured">
-                                <EventImage src={featuredAnnouncement.cover_image} alt={featuredAnnouncement.title} className="updates-featured-image" />
+                            <article className={`updates-featured${featuredAnnouncement.kind === "council" ? " is-council-announcement" : ""}`}>
+                                {featuredAnnouncement.kind === "council"
+                                    ? <div className="updates-announcement-artwork" aria-hidden="true"><span>AU · SSC</span><strong>NOTICE</strong></div>
+                                    : <EventImage src={featuredAnnouncement.cover_image} alt={featuredAnnouncement.title} className="updates-featured-image" />}
                                 <div className="updates-featured-copy">
                                     <div className="update-item-meta"><span className={`update-type-pill is-${featuredAnnouncement.announcement.type}`}>{noticeLabel(featuredAnnouncement.announcement.type)}</span><time dateTime={featuredAnnouncement.announcement.date.toISOString()}>{formatPostedDate(featuredAnnouncement.announcement.date)}</time></div>
                                     <h3>{featuredAnnouncement.title}</h3>
-                                    <p>{featuredAnnouncement.description || "Open the event page for the latest information."}</p>
-                                    <div className="update-item-footer"><span>{formatDate(featuredAnnouncement.start_date)} · {featuredAnnouncement.location || "Location to be announced"}</span><Link to={`/events/${featuredAnnouncement.id}`}>View event details <span aria-hidden="true">→</span></Link></div>
+                                    <p>{featuredAnnouncement.content || featuredAnnouncement.description || "Open the event page for the latest information."}</p>
+                                    <div className="update-item-footer">{featuredAnnouncement.kind === "council"
+                                        ? <span>{featuredAnnouncement.category || "General"} · Official council notice</span>
+                                        : <><span>{formatDate(featuredAnnouncement.start_date)} · {featuredAnnouncement.location || "Location to be announced"}</span><Link to={`/events/${featuredAnnouncement.id}`}>View event details <span aria-hidden="true">→</span></Link></>}</div>
                                 </div>
                             </article>
 
                             {followingAnnouncements.length > 0 && <div className="updates-feed" aria-label="Earlier announcements">
-                                {followingAnnouncements.map((event) => (
-                                    <article className="update-item" key={`${event.id}-${event.announcement.date.toISOString()}`}>
-                                        <div className="update-date"><span>{formatPostedMonth(event.announcement.date)}</span><strong>{formatPostedDay(event.announcement.date)}</strong></div>
+                                {followingAnnouncements.map((notice) => (
+                                    <article className={`update-item${notice.kind === "council" ? " is-council-announcement" : ""}`} key={`${notice.kind}-${notice.id}-${notice.announcement.date.toISOString()}`}>
+                                        <div className="update-date"><span>{formatPostedMonth(notice.announcement.date)}</span><strong>{formatPostedDay(notice.announcement.date)}</strong></div>
                                         <div className="update-item-content">
-                                            <div className="update-item-meta"><span className={`update-type-pill is-${event.announcement.type}`}>{noticeLabel(event.announcement.type)}</span><time dateTime={event.announcement.date.toISOString()}>{formatPostedDate(event.announcement.date)}</time></div>
-                                            <h3>{event.title}</h3>
-                                            <p>{event.description || "Open the event page for the latest information."}</p>
-                                            <div className="update-item-footer"><span>{formatDate(event.start_date)} · {event.location || "Location to be announced"}</span><Link to={`/events/${event.id}`}>Event details <span aria-hidden="true">→</span></Link></div>
+                                            <div className="update-item-meta"><span className={`update-type-pill is-${notice.announcement.type}`}>{noticeLabel(notice.announcement.type)}</span><time dateTime={notice.announcement.date.toISOString()}>{formatPostedDate(notice.announcement.date)}</time></div>
+                                            <h3>{notice.title}</h3>
+                                            <p>{notice.content || notice.description || "Open the event page for the latest information."}</p>
+                                            <div className="update-item-footer">{notice.kind === "council"
+                                                ? <span>{notice.category || "General"} · Official council notice</span>
+                                                : <><span>{formatDate(notice.start_date)} · {notice.location || "Location to be announced"}</span><Link to={`/events/${notice.id}`}>Event details <span aria-hidden="true">→</span></Link></>}</div>
                                         </div>
                                     </article>
                                 ))}
                             </div>}
                         </>
                     ) : (
-                        <div className="event-browser-empty event-empty-state"><span className="empty-state-mark" aria-hidden="true">✳</span><h2>{query || activeFilter !== "all" ? "No matching announcements" : "No recent council notices"}</h2><p>{query || activeFilter !== "all" ? "Try another search or filter." : `Newly published events and important changes from the last ${RECENT_WINDOW_DAYS} days will appear here. The event calendar has the complete upcoming and past event list.`}</p><Link className="text-button" to="/events">Browse all events</Link></div>
+                        <div className="event-browser-empty event-empty-state"><span className="empty-state-mark" aria-hidden="true">✳</span><h2>{query || activeFilter !== "all" ? "No matching announcements" : "No recent council notices"}</h2><p>{query || activeFilter !== "all" ? "Try another search or filter." : `Council announcements, new events, and important event changes from the last ${RECENT_WINDOW_DAYS} days will appear here. The event calendar has the complete upcoming and past event list.`}</p><Link className="text-button" to="/events">Browse all events</Link></div>
                     )}
                 </section>
             </main>

@@ -6,7 +6,7 @@ import {
 
 import { apiRequest, getAdminAttendance, getAdminEvents } from "../services/api";
 
-export function CameraScanner({ onDecoded, disabled = false, title = "Verify a registration", label = "Registration QR camera scanner" }) {
+export function CameraScanner({ onDecoded, disabled = false, title = "Verify an attendance QR", label = "Attendance QR camera scanner" }) {
     const readerId = `qr-camera-${useId().replace(/:/g, "")}`;
     const scannerRef = useRef(null);
     const decodedRef = useRef(onDecoded);
@@ -183,29 +183,30 @@ function QRScanner() {
 
     useEffect(() => {
         if (!eventId) { setAttendanceCount(0); return; }
-        getAdminAttendance(eventId).then((data) => setAttendanceCount(data.count || 0)).catch(() => {});
+        getAdminAttendance(eventId).then((data) => setAttendanceCount(data.summary?.currently_present || 0)).catch(() => {});
     }, [eventId]);
 
-    async function verifyRegistration(registrationCode) {
+    async function verifyAttendanceQr(qrValue) {
         setVerifying(true);
 
         try {
             const data = await apiRequest("/attendance/checkin", {
                 method: "POST",
                 credentials: "include",
-                body: JSON.stringify({ registration_code: registrationCode, ...(eventId ? { event_id: Number(eventId) } : {}) })
+                body: JSON.stringify({ qr_value: qrValue, event_id: Number(eventId) })
             });
 
             setResult({
-                kind: data.success ? "verified" :
+                kind: data.success ? data.action === "time_out" ? "checked-out" : "verified" :
                     data.wrong_event ? "wrong-event" :
-                    data.already_checked_in ? "duplicate" :
+                    data.action === "completed" ? "complete" :
+                    data.action === "duplicate" ? "duplicate" :
                         data.attendee ? "cancelled" : "invalid",
                 data,
                 message: data.message
             });
             if (data.success) {
-                getAdminAttendance(eventId).then((attendance) => setAttendanceCount(attendance.count || 0)).catch(() => {});
+                getAdminAttendance(eventId).then((attendance) => setAttendanceCount(attendance.summary?.currently_present || 0)).catch(() => {});
             }
         } catch (error) {
             setResult({
@@ -215,6 +216,20 @@ function QRScanner() {
         } finally {
             setVerifying(false);
         }
+    }
+
+    async function recordManualAttendance(match) {
+        setVerifying(true);
+        try {
+            const data = await apiRequest("/admin/attendance/manual", {
+                method: "POST", credentials: "include",
+                body: JSON.stringify({ event_id: Number(eventId), participant_type: match.participant_type, registration_id: match.registration_id, user_id: match.user_id })
+            });
+            setResult({ kind: data.success ? data.action === "time_out" ? "checked-out" : "verified" : data.action === "completed" ? "complete" : "duplicate", data, message: data.message });
+            if (data.success) getAdminAttendance(eventId).then((attendance) => setAttendanceCount(attendance.summary?.currently_present || 0)).catch(() => {});
+        } catch (error) {
+            setResult({ kind: "invalid", message: error.message || "Manual attendance could not be recorded." });
+        } finally { setVerifying(false); }
     }
 
     async function handleManualSubmit(event) {
@@ -231,27 +246,29 @@ function QRScanner() {
     }
 
     const resultTitle = result?.kind === "verified" ? "Checked in" :
+        result?.kind === "checked-out" ? "Checked out" :
+        result?.kind === "complete" ? "Already checked out" :
         result?.kind === "wrong-event" ? "Wrong event" :
         result?.kind === "duplicate" ? "Already checked in" :
-            result?.kind === "cancelled" ? "Registration cancelled" : "QR not verified";
+            result?.kind === "cancelled" ? "Account unavailable" : "QR not verified";
 
     return (
         <div className="qr-checkin-workspace" aria-live="polite">
-            <label className="qr-event-select">Confirm event before scanning<select required value={eventId} onChange={(event) => setEventId(event.target.value)}><option value="">Choose an event…</option>{events.map((event) => <option key={event.id} value={event.id}>{event.title}</option>)}</select><span>Passes for a different event will be rejected. Select the event the check-in team is serving.</span></label>
-            {eventId && <p className="qr-event-attendance-count" role="status">{attendanceCount} member{attendanceCount === 1 ? "" : "s"} checked in for this event</p>}
+            <label className="qr-event-select">Select event before scanning<select required value={eventId} onChange={(event) => setEventId(event.target.value)}><option value="">Choose an event…</option>{events.map((event) => <option key={event.id} value={event.id}>{event.title}</option>)}</select><span>Council members use one reusable identity QR. Students agree to participate and then use the QR from that event page. Scanning records attendance; participation is not attendance.</span></label>
+            {eventId && <p className="qr-event-attendance-count" role="status">{attendanceCount} attendee{attendanceCount === 1 ? "" : "s"} currently present at this event</p>}
             {verifying ? (
                 <section className="qr-verification-pending" role="status">
                     <span className="qr-result-symbol" aria-hidden="true">…</span>
                     <div>
-                        <h2>Verifying registration</h2>
-                        <p>Checking the registration and recording attendance.</p>
+                            <h2>Verifying attendance QR</h2>
+                            <p>Checking the account and, for students, confirming the QR matches the selected event before recording the next attendance action.</p>
                     </div>
                 </section>
             ) : result ? (
                 <section className={`qr-verification-result is-${result.kind}`}>
                     <div className="qr-result-heading">
                         <span className="qr-result-symbol" aria-hidden="true">
-                            {result.kind === "verified" ? "✓" : result.kind === "duplicate" ? "!" : "×"}
+                            {result.kind === "verified" || result.kind === "checked-out" ? "✓" : result.kind === "duplicate" ? "!" : "×"}
                         </span>
                         <div>
                             <span>{resultTitle}</span>
@@ -269,6 +286,7 @@ function QRScanner() {
                                 <span>EMAIL</span>
                                 <strong>{result.data.attendee.email}</strong>
                             </div>
+                            {result.data.attendee.contact && <div><span>CONTACT</span><strong>{result.data.attendee.contact}</strong></div>}
                             <div>
                                 <span>PROGRAM / YEAR</span>
                                 <strong>{[result.data.attendee.course, result.data.attendee.year_level].filter(Boolean).join(" · ") || "—"}</strong>
@@ -292,9 +310,11 @@ function QRScanner() {
                                 </div>
                             )}
                             <div>
-                                <span>REGISTRATION</span>
-                                <strong>{result.data.registration_code}</strong>
+                                <span>PARTICIPANT TYPE</span>
+                                <strong>{result.data.participant_type === "council" ? "Council member" : "Student"}</strong>
                             </div>
+                            {result.data.attendee.council_position && <div><span>COUNCIL POSITION</span><strong>{result.data.attendee.council_position.replaceAll("_", " ")}</strong></div>}
+                            {result.data.time_out && <div><span>CHECK-OUT TIME</span><strong>{formatDateTime(result.data.time_out)}</strong></div>}
                         </div>
                     )}
 
@@ -309,7 +329,7 @@ function QRScanner() {
                 </section>
             ) : (
                 <>
-                    <CameraScanner onDecoded={verifyRegistration} disabled={!eventId} />
+                    <CameraScanner onDecoded={verifyAttendanceQr} disabled={!eventId} />
                     <form className="qr-manual-form" onSubmit={handleManualSubmit}>
                         <label htmlFor="member-lookup">Manual member lookup</label>
                         <div>
@@ -327,8 +347,8 @@ function QRScanner() {
                             </button>
                         </div>
                     </form>
-                    {memberMatches.length > 0 && <div className="qr-member-matches" aria-live="polite">{memberMatches.map((member) => <article key={member.registration_code}><div><strong>{member.name}</strong><span>{member.student_id} · {member.email}</span><small>Registration: {member.status}</small></div><button className="admin-primary-action" type="button" disabled={member.status === "attended"} onClick={() => verifyRegistration(member.registration_code)}>{member.status === "attended" ? "Already checked in" : "Verify & check in"}</button></article>)}</div>}
-                    {!searchingMembers && memberQuery.length >= 2 && memberMatches.length === 0 && !result && <p className="admin-feedback">No active registration matched this member and event.</p>}
+                    {memberMatches.length > 0 && <div className="qr-member-matches" aria-live="polite">{memberMatches.map((member) => <article key={`${member.participant_type}-${member.registration_id || member.user_id}`}><div><strong>{member.name}</strong><span>{member.student_id} · {member.email}</span><small>{member.participant_type === "council" ? member.council_position?.replaceAll("_", " ") || "Council member" : `${member.course || "Student"} · ${member.year_level || "Year not specified"}`}</small></div><button className="admin-primary-action" type="button" disabled={verifying || member.attendance_state === "completed"} onClick={() => recordManualAttendance(member)}>{member.attendance_state === "present" ? "Record check-out" : member.attendance_state === "completed" ? "Attendance complete" : "Record check-in"}</button></article>)}</div>}
+                    {!searchingMembers && memberQuery.length >= 2 && memberMatches.length === 0 && !result && <p className="admin-feedback">No student or council account matched this search.</p>}
                 </>
             )}
         </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import AuthLayout from "../components/AuthLayout";
 import { apiRequest } from "../services/api";
@@ -7,6 +7,7 @@ import { getCommitteeWorkspacePath, hasExecutiveAccess } from "../utils/workspac
 
 function Login() {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const [identifier, setIdentifier] = useState("");
     const [password, setPassword] = useState("");
     const [rememberMe, setRememberMe] = useState(false);
@@ -68,7 +69,10 @@ function Login() {
             localStorage.setItem("user", JSON.stringify(data.user));
             window.dispatchEvent(new Event("auth-change"));
 
-            if (hasExecutiveAccess(data.user)) navigate("/admin", { replace: true });
+            const requestedNext = searchParams.get("next") || "";
+            const safeNext = requestedNext.startsWith("/") && !requestedNext.startsWith("//") && !requestedNext.includes("\\") ? requestedNext : "";
+            if (safeNext) navigate(safeNext, { replace: true });
+            else if (hasExecutiveAccess(data.user)) navigate("/admin", { replace: true });
             else if (data.user.committee_assignment) navigate(getCommitteeWorkspacePath(data.user), { replace: true });
             else if (data.user.council_position) navigate("/my-events", { replace: true });
             else navigate("/", { replace: true });
@@ -94,7 +98,7 @@ function Login() {
     return (
         <AuthLayout>
                     <h1>Welcome back</h1>
-                    <p className="login-panel-intro">Sign in to continue to your campus events and registrations.</p>
+                    <p className="login-panel-intro">Sign in to continue to your campus events and council updates.</p>
                     <p className={`login-db-status is-${databaseStatus}`} role="status" aria-live="polite">
                         <span aria-hidden="true" />
                         {databaseStatus === "checking" && "Checking sign-in service…"}

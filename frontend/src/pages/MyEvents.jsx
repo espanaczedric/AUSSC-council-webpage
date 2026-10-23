@@ -2,49 +2,76 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import Navbar from "../components/Navbar";
-import EventImage from "../components/EventImage";
 import { PublicPageSkeleton, SkeletonBlock, SkeletonRows } from "../components/LoadingSkeletons";
-import { apiRequest, getMyEventAssignments, getPublicEvents, signUpForEventAssignment } from "../services/api";
+import { getMyAttendance, getMyEventResponses, getPublicEventUpdates, respondToEvent } from "../services/api";
+
+function storedUser() {
+    try { return JSON.parse(localStorage.getItem("user") || "null"); } catch { return null; }
+}
+
+function dateLabel(value) {
+    if (!value) return "Schedule pending";
+    const date = new Date(String(value).replace(" ", "T"));
+    return Number.isNaN(date.getTime()) ? "Schedule pending" : date.toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "short" });
+}
 
 export default function MyEvents() {
-    const [events, setEvents] = useState([]); const [assignments, setAssignments] = useState([]); const [availableEvents, setAvailableEvents] = useState([]);
-    const [loading, setLoading] = useState(true); const [feedback, setFeedback] = useState("");
-    const load = useCallback(async () => {
-        const [registrations, assignmentData, publicData] = await Promise.all([
-            apiRequest("/registration/my", { credentials: "include" }), getMyEventAssignments(), getPublicEvents()
-        ]);
-        const nextAssignments = assignmentData.assignments || [];
-        setEvents(registrations.events || []); setAssignments(nextAssignments);
-        const joined = new Set(nextAssignments.map((item) => item.event_id));
-        setAvailableEvents((publicData.events || []).filter((event) => event.display_status === "upcoming" && event.participation_open !== false && !joined.has(event.id) && !(Number(event.assignment_capacity) > 0 && Number(event.assignment_count) >= Number(event.assignment_capacity))));
-    }, []);
-    useEffect(() => { load().catch((error) => setFeedback(error.message)).finally(() => setLoading(false)); }, [load]);
-    const now = Date.now();
-    const assignmentGroups = [
-        { title: "Upcoming assignments", items: assignments.filter((item) => new Date(item.event?.start_date?.replace(" ", "T") || 0).getTime() >= now) },
-        { title: "Previous assignments", items: assignments.filter((item) => new Date(item.event?.start_date?.replace(" ", "T") || 0).getTime() < now) }
-    ].filter((group) => group.items.length);
+    const user = storedUser();
+    const isCouncilMember = Boolean(user?.role === "admin" || user?.council_position || user?.committee_assignment);
+    const isSignedIn = Boolean(user?.id);
+    const [responses, setResponses] = useState([]);
+    const [attendance, setAttendance] = useState([]);
+    const [announcements, setAnnouncements] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [busyId, setBusyId] = useState("");
+    const [feedback, setFeedback] = useState("");
 
-    async function joinEvent(eventId) {
+    const load = useCallback(async () => {
+        const [responseResult, attendanceResult, updateResult] = await Promise.allSettled([
+            isCouncilMember ? getMyEventResponses() : Promise.resolve({ responses: [] }),
+            getMyAttendance(),
+            getPublicEventUpdates()
+        ]);
+        if (responseResult.status === "fulfilled") setResponses(responseResult.value.responses || []);
+        else if (isCouncilMember) setFeedback(responseResult.reason.message || "Council participation could not be loaded.");
+        if (attendanceResult.status === "fulfilled") setAttendance(attendanceResult.value.attendance || []);
+        else if (!isSignedIn) setFeedback("Sign in to view your attendance history.");
+        else if (!isCouncilMember) setFeedback(attendanceResult.reason.message || "Your attendance history could not be loaded.");
+        if (updateResult.status === "fulfilled") setAnnouncements(updateResult.value.updates || []);
+    }, [isCouncilMember, isSignedIn]);
+
+    useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
+
+    async function updateResponse(response, status) {
+        setBusyId(String(response.event_id));
         setFeedback("");
-        try { await signUpForEventAssignment(eventId); await load(); setFeedback("Your sign-up was sent for council review."); }
-        catch (error) { setFeedback(error.message); }
+        try {
+            const result = await respondToEvent(response.event_id, status);
+            setResponses((current) => current.map((item) => item.event_id === response.event_id ? { ...item, ...(result.response || {}), status, responded_at: result.response?.responded_at || new Date().toISOString() } : item));
+            setFeedback(result.message || "Your participation choice was saved.");
+        } catch (error) {
+            setFeedback(error.message || "Your participation could not be saved.");
+        } finally { setBusyId(""); }
     }
 
     if (loading) return <PublicPageSkeleton className="my-events-page member-events-page ui-member-events-loading">
         <header className="events-header"><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonBlock className="ui-skeleton-title" /><SkeletonBlock className="ui-skeleton-description" /></header>
         <section className="member-assignment-section" aria-hidden="true"><header><div><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonBlock className="ui-skeleton-section-title" /><SkeletonBlock className="ui-skeleton-description" /></div></header><SkeletonRows count={2} /></section>
-        <section className="my-events-registration-section" aria-hidden="true"><header><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonBlock className="ui-skeleton-section-title" /><SkeletonBlock className="ui-skeleton-description" /></header><SkeletonRows count={3} image /></section>
+        <section className="my-events-registration-section" aria-hidden="true"><header><SkeletonBlock className="ui-skeleton-eyebrow" /><SkeletonBlock className="ui-skeleton-section-title" /><SkeletonBlock className="ui-skeleton-description" /></header><SkeletonRows count={3} /></section>
     </PublicPageSkeleton>;
+
     return <><Navbar /><main className="my-events-page member-events-page">
-        <header className="events-header"><span>YOUR ACTIVITY</span><h1>My Events & assignments</h1><p>View your event registrations, QR passes, and official council assignment sign-ups.</p></header>
+        <header className="events-header"><span>YOUR ACTIVITY</span><h1>My Activity</h1><p>Council participation and student attendance are shown separately. Accepting an invitation does not create a task assignment or attendance record.</p></header>
         {feedback && <p className="my-events-feedback" role="status">{feedback}</p>}
-        <section className="member-assignment-section" aria-labelledby="member-assignment-heading"><header><div><span>COUNCIL PARTICIPATION</span><h2 id="member-assignment-heading">Event assignments</h2><p>Sign up to help with an upcoming event. Your request stays pending until reviewed.</p></div></header>
-            {assignmentGroups.map((group) => <div className="member-assignment-group" key={group.title}><h3>{group.title}</h3><div className="member-assignment-list">{group.items.map((assignment) => <article key={assignment.id}><div><span className={`member-assignment-status is-${assignment.status}`}>{assignment.status}</span><h3>{assignment.event?.title}</h3><p>{assignment.event?.location} · {assignment.event?.start_date ? new Date(assignment.event.start_date.replace(" ", "T")).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "Schedule pending"}</p>{assignment.event?.participation_requirements && <p className="member-assignment-requirements">Requirements: {assignment.event.participation_requirements}</p>}</div><Link to={`/events/${assignment.event?.id}`}>Event details →</Link></article>)}</div></div>)}
-            {availableEvents.length > 0 ? <div className="member-assignment-list">{availableEvents.map((event) => <article key={event.id}><div><span className="member-assignment-status is-open">Sign-ups open</span><h3>{event.title}</h3><p>{event.location} · {new Date(event.start_date.replace(" ", "T")).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}</p>{event.participation_requirements && <p className="member-assignment-requirements">Requirements: {event.participation_requirements}</p>}{Number(event.assignment_capacity) > 0 && <p>{Math.max(0, Number(event.assignment_capacity) - Number(event.assignment_count || 0))} assignment places remain</p>}</div><button className="register-button" type="button" onClick={() => joinEvent(event.id)}>Sign up</button></article>)}</div> : assignments.length === 0 && <p className="member-assignment-empty">There are no upcoming assignment sign-ups right now.</p>}
-        </section>
-        <section className="my-events-registration-section" aria-labelledby="my-registrations-heading"><header><span>ATTENDANCE PASSES</span><h2 id="my-registrations-heading">Event registrations</h2><p>Open your individual QR pass for check-in. The code only grants access to your own registration.</p></header>
-            <div className="my-events-list">{events.length ? events.map((registration) => <article className="my-event-card" key={registration.registration_id}><EventImage src={registration.cover_image} alt={registration.title} className="my-event-image"/><div><small>{new Date(registration.start_date.replace(" ", "T")).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" })}</small><h3>{registration.title}</h3><p>Status: <strong>{registration.status}</strong></p><Link to={`/registration/${registration.registration_code}`}>Open QR attendance pass →</Link></div></article>) : <div className="empty-events"><h3>No event registrations yet.</h3><p>Find an event and reserve your spot.</p><Link to="/events" className="register-button">Explore events</Link></div>}</div>
+
+        {announcements.length > 0 && <section className="member-assignment-section" aria-labelledby="member-notices-heading"><header><div><span>OFFICIAL COUNCIL NOTICES</span><h2 id="member-notices-heading">Recent event updates</h2><p>New events and important event changes from the council.</p></div><Link to="/announcements">All notices →</Link></header><div className="member-assignment-list">{announcements.slice(0, 3).map((event) => <article key={`${event.id}-${event.public_updated_at || event.updated_at || event.created_at}`}><div><span className={`member-assignment-status ${event.status === "cancelled" ? "is-cancelled" : "is-open"}`}>{event.status === "cancelled" || event.publication_status === "cancelled" ? "Cancelled" : event.public_update_type === "details_updated" ? "Updated" : "New event"}</span><h3>{event.title}</h3><p>{event.description}</p></div><Link to={`/events/${event.id}`}>Event notice →</Link></article>)}</div></section>}
+
+        {isCouncilMember && <section className="member-assignment-section council-response-list" aria-labelledby="council-participation-heading"><header><div><span>COUNCIL PARTICIPATION</span><h2 id="council-participation-heading">Participation</h2><p>Let the council know whether you intend to help. This is separate from work assignments and event attendance.</p></div></header>
+            {responses.length ? <div className="member-assignment-list">{responses.map((response) => <article key={response.id}><div><span className={`member-assignment-status is-${response.status}`}>{response.status}</span><h3>{response.event?.title || "Council event"}</h3><p>{response.event?.location || "Location to be confirmed"} · {dateLabel(response.event?.start_date)}</p>{response.responded_at && <small>Participation updated {dateLabel(response.responded_at)}</small>}</div><div className="council-response-card-actions"><Link to={`/events/${response.event?.id}`}>Event details →</Link>{response.event?.id && response.event?.display_status !== "past" && <><button type="button" className="admin-primary-action" disabled={busyId === String(response.event_id) || response.status === "accepted"} onClick={() => updateResponse(response, "accepted")}>{busyId === String(response.event_id) ? "Saving…" : response.status === "accepted" ? "Accepted" : "Accept"}</button><button type="button" className="admin-secondary-action" disabled={busyId === String(response.event_id) || response.status === "declined"} onClick={() => updateResponse(response, "declined")}>{response.status === "declined" ? "Declined" : "Decline"}</button></>}</div></article>)}</div> : <div className="member-assignment-empty"><h3>No event invitations yet</h3><p>When an event is shared with the council, your pending participation will appear here.</p></div>}
+        </section>}
+
+        <section className="my-events-registration-section student-attendance-history" aria-labelledby="my-attendance-heading"><header><span>EVENT ATTENDANCE</span><h2 id="my-attendance-heading">Your attendance history</h2><p>Only event check-in and check-out records appear here. Participation is not attendance.</p></header>
+            <div className="my-events-list">{attendance.length ? attendance.map((record, index) => <article className="my-event-card" key={`${record.event?.id}-${record.time_in || index}`}><div><small>{dateLabel(record.event?.start_date)}</small><h3>{record.event?.title || "Event"}</h3><p>{record.event?.location || "Location not recorded"}</p><p>Attendance: <strong>{record.time_out ? "Checked out" : record.time_in ? "Checked in · checkout not recorded" : "No attendance recorded"}</strong></p>{record.time_in && <p>Time in: {dateLabel(record.time_in)}</p>}{record.time_out && <p>Time out: {dateLabel(record.time_out)}</p>}</div></article>) : <div className="empty-events"><h3>No attendance records yet</h3><p>Agree to participate on an event page, generate that event’s QR, then have it scanned at check-in.</p><Link to="/events" className="register-button">Explore events</Link></div>}</div>
         </section>
     </main></>;
 }

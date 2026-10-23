@@ -3,7 +3,9 @@ import { Link, useNavigate } from "react-router-dom";
 
 import Navbar from "../components/Navbar";
 import ImageCropDialog from "../components/ImageCropDialog";
-import { getCurrentUser, getEventImageUrl, updateMyProfile } from "../services/api";
+import ClassScheduleEditor from "../components/ClassScheduleEditor";
+import QRCode from "react-qr-code";
+import { apiRequest, getCurrentUser, getEventImageUrl, getMyEventResponses, updateMyProfile } from "../services/api";
 import { committeeLabels, getCommitteeWorkspacePath, hasExecutiveAccess } from "../utils/workspaceAccess";
 
 function readStoredUser() {
@@ -17,6 +19,10 @@ function readStoredUser() {
 
 function initialsFor(user) {
     return `${user?.first_name?.[0] || ""}${user?.last_name?.[0] || ""}`.toUpperCase() || "U";
+}
+
+function isCouncilMemberAccount(user) {
+    return Boolean(user?.role === "admin" || user?.council_position || user?.committee_assignment);
 }
 
 const councilPositionNames = {
@@ -55,12 +61,21 @@ export default function CouncilProfile() {
     const [saving, setSaving] = useState(false);
     const [photoSavingKind, setPhotoSavingKind] = useState("");
     const [loadedCoverImage, setLoadedCoverImage] = useState("");
+    const [pendingPhotoFiles, setPendingPhotoFiles] = useState({ profile: null, cover: null });
+    const [photoPreviewUrls, setPhotoPreviewUrls] = useState({ profile: "", cover: "" });
     const [connectionNote, setConnectionNote] = useState(false);
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
     const [removeProfile, setRemoveProfile] = useState(false);
     const [removeCover, setRemoveCover] = useState(false);
     const [cropRequest, setCropRequest] = useState(null);
+    const [councilAttendanceEvents, setCouncilAttendanceEvents] = useState([]);
+    const [councilResponses, setCouncilResponses] = useState([]);
+    const [participationLoading, setParticipationLoading] = useState(true);
+    const [participationError, setParticipationError] = useState("");
+    const [memberAttendanceBusy, setMemberAttendanceBusy] = useState("");
+    const [credentialMessage, setCredentialMessage] = useState("");
+    const [identityQrValue, setIdentityQrValue] = useState("");
 
     useEffect(() => {
         let active = true;
@@ -94,7 +109,58 @@ export default function CouncilProfile() {
     }, [navigate]);
 
     useEffect(() => {
-        const source = user?.cover_photo ? getEventImageUrl(user.cover_photo) : "";
+        if (!user?.id || !isCouncilMemberAccount(user)) return undefined;
+        let active = true;
+        setParticipationLoading(true);
+        setParticipationError("");
+        Promise.allSettled([
+            apiRequest("/council/attendance/mine", { credentials: "include" }),
+            getMyEventResponses()
+        ]).then(([attendanceResult, participationResult]) => {
+            if (!active) return;
+            setCouncilAttendanceEvents(attendanceResult.status === "fulfilled" ? attendanceResult.value.events || [] : []);
+            if (participationResult.status === "fulfilled") {
+                setCouncilResponses(participationResult.value.responses || []);
+                setParticipationError("");
+            } else {
+                setCouncilResponses([]);
+                setParticipationError(participationResult.reason?.message || "Council participation could not be loaded.");
+            }
+            setParticipationLoading(false);
+        });
+        return () => { active = false; };
+    }, [user?.id, user?.role, user?.council_position, user?.committee_assignment]);
+
+    useEffect(() => {
+        const previews = {
+            profile: pendingPhotoFiles.profile ? URL.createObjectURL(pendingPhotoFiles.profile) : "",
+            cover: pendingPhotoFiles.cover ? URL.createObjectURL(pendingPhotoFiles.cover) : ""
+        };
+        setPhotoPreviewUrls(previews);
+        return () => Object.values(previews).forEach((url) => { if (url) URL.revokeObjectURL(url); });
+    }, [pendingPhotoFiles]);
+
+    useEffect(() => {
+        let active = true;
+        setIdentityQrValue("");
+        if (!user?.id || !isCouncilMemberAccount(user)) return () => { active = false; };
+        setCredentialMessage("");
+        apiRequest("/council/attendance/credential", { credentials: "include" })
+            .then((data) => {
+                if (!active) return;
+                const qrValue = data.credential?.qr_value || "";
+                setIdentityQrValue(qrValue);
+                if (!qrValue) setCredentialMessage("Add a valid account ID to your profile before generating your council QR.");
+            })
+            .catch((requestError) => {
+                if (!active) return;
+                setCredentialMessage(requestError.message || "The reusable council QR could not be loaded.");
+            });
+        return () => { active = false; };
+    }, [user?.id, user?.role, user?.student_id, user?.council_position, user?.committee_assignment]);
+
+    useEffect(() => {
+        const source = photoPreviewUrls.cover || (user?.cover_photo ? getEventImageUrl(user.cover_photo) : "");
         if (!source) {
             setLoadedCoverImage("");
             return undefined;
@@ -104,7 +170,7 @@ export default function CouncilProfile() {
         image.onerror = () => setLoadedCoverImage(source);
         image.src = source;
         return () => { image.onload = null; image.onerror = null; };
-    }, [user?.cover_photo]);
+    }, [photoPreviewUrls.cover, user?.cover_photo]);
 
     if (!user && loading) return <>
         <Navbar />
@@ -129,8 +195,9 @@ export default function CouncilProfile() {
     if (!user) return null;
 
     const initials = initialsFor(user);
-    const profileImage = !removeProfile ? getEventImageUrl(user.profile_picture) : "";
-    const coverImage = !removeCover ? getEventImageUrl(user.cover_photo) : "";
+    const isCouncilMember = isCouncilMemberAccount(user);
+    const profileImage = !removeProfile ? photoPreviewUrls.profile || getEventImageUrl(user.profile_picture) : "";
+    const coverImage = !removeCover ? photoPreviewUrls.cover || getEventImageUrl(user.cover_photo) : "";
     const coverIsLoading = photoSavingKind === "cover" || (Boolean(coverImage) && loadedCoverImage !== coverImage);
     const accountDetails = [
         { label: "Student ID", value: user.student_id || "—" },
@@ -148,10 +215,10 @@ export default function CouncilProfile() {
             ? { to: getCommitteeWorkspacePath(user), label: `${committeeLabels[user.committee_assignment]?.replace(" Committee", "")} workspace` }
             : user.council_position
                 ? { to: "/council", label: "Council governance" }
-                : { to: "/my-events", label: "My registrations" };
-
+                : { to: "/my-events", label: "My attendance" };
     function beginEditing() {
         setForm({ ...blankForm, ...user });
+        setPendingPhotoFiles({ profile: null, cover: null });
         setRemoveProfile(false);
         setRemoveCover(false);
         setCropRequest(null);
@@ -163,6 +230,7 @@ export default function CouncilProfile() {
     function cancelEditing() {
         setEditing(false);
         setError("");
+        setPendingPhotoFiles({ profile: null, cover: null });
         setRemoveProfile(false);
         setRemoveCover(false);
         setCropRequest(null);
@@ -177,8 +245,11 @@ export default function CouncilProfile() {
         for (const field of ["first_name", "last_name", "student_id", "email", "course", "year_level"]) {
             payload.set(field, String(form[field] || "").trim());
         }
-        if (removeProfile) payload.set("remove_profile_picture", "true");
-        if (removeCover) payload.set("remove_cover_photo", "true");
+        if (pendingPhotoFiles.profile) payload.set("profile_picture", pendingPhotoFiles.profile);
+        else if (removeProfile) payload.set("remove_profile_picture", "true");
+        if (pendingPhotoFiles.cover) payload.set("cover_photo", pendingPhotoFiles.cover);
+        else if (removeCover) payload.set("remove_cover_photo", "true");
+        setPhotoSavingKind(pendingPhotoFiles.profile ? "profile" : pendingPhotoFiles.cover ? "cover" : "");
 
         try {
             const data = await updateMyProfile(payload);
@@ -186,6 +257,7 @@ export default function CouncilProfile() {
             setForm({ ...blankForm, ...data.user });
             localStorage.setItem("user", JSON.stringify(data.user));
             window.dispatchEvent(new Event("auth-change"));
+            setPendingPhotoFiles({ profile: null, cover: null });
             setEditing(false);
             setRemoveProfile(false);
             setRemoveCover(false);
@@ -195,6 +267,7 @@ export default function CouncilProfile() {
             setError(requestError.message || "Could not save your profile. Please try again.");
         } finally {
             setSaving(false);
+            setPhotoSavingKind("");
         }
     }
 
@@ -217,12 +290,17 @@ export default function CouncilProfile() {
     }
 
     async function applyCroppedPhoto(kind, file) {
-        setSaving(true);
-        setPhotoSavingKind(kind);
         setError("");
         setNotice("");
+        setPendingPhotoFiles((current) => ({ ...current, [kind]: file }));
+        if (kind === "profile") setRemoveProfile(false);
+        else setRemoveCover(false);
+        setCropRequest(null);
+        setSaving(true);
+        setPhotoSavingKind(kind);
 
-        // Save only this photo and leave unsaved text edits untouched.
+        // Save the photo immediately. Keep the cropped file queued so the
+        // profile form can retry it if this upload fails.
         const payload = new FormData();
         for (const field of ["first_name", "last_name", "student_id", "email", "course", "year_level"]) {
             payload.set(field, String(user[field] || "").trim());
@@ -234,17 +312,59 @@ export default function CouncilProfile() {
             setUser(data.user);
             localStorage.setItem("user", JSON.stringify(data.user));
             window.dispatchEvent(new Event("auth-change"));
-            if (kind === "profile") setRemoveProfile(false);
-            else setRemoveCover(false);
-            setCropRequest(null);
+            setPendingPhotoFiles((current) => ({ ...current, [kind]: null }));
             setNotice(`${kind === "profile" ? "Profile picture" : "Cover photo"} saved.`);
             setConnectionNote(false);
         } catch (requestError) {
-            setError(requestError.message || "Could not save the photo. Please try again.");
-            throw requestError;
+            setError(`${requestError.message || "Could not save the photo."} Your cropped photo is still previewed; Save changes will retry it.`);
         } finally {
             setSaving(false);
             setPhotoSavingKind("");
+        }
+    }
+
+    async function recordCouncilSelfAttendance(eventId) {
+        setMemberAttendanceBusy(String(eventId));
+        setCredentialMessage("");
+        try {
+            const data = await apiRequest("/attendance/self", { method: "POST", credentials: "include", body: JSON.stringify({ event_id: eventId, participant_type: "council" }) });
+            setCredentialMessage(data.message || "Attendance updated.");
+            const refreshed = await apiRequest("/council/attendance/mine", { credentials: "include" });
+            setCouncilAttendanceEvents(refreshed.events || []);
+        } catch (requestError) {
+            setCredentialMessage(requestError.message || "Attendance could not be updated.");
+        } finally { setMemberAttendanceBusy(""); }
+    }
+
+    async function downloadAttendanceCredential() {
+        if (!identityQrValue) return;
+        try {
+            const [{ jsPDF }, { default: html2canvas }] = await Promise.all([import("jspdf"), import("html2canvas")]);
+            const artwork = document.getElementById("council-pass-artwork");
+            if (!artwork) throw new Error("The council pass is unavailable.");
+            if (document.fonts?.load) {
+                await Promise.all([document.fonts.load("700 16px Poppins"), document.fonts.load("800 20px Montserrat")]);
+            }
+            await Promise.all(Array.from(artwork.querySelectorAll("img"), (image) => image.decode?.().catch(() => undefined)));
+            const canvas = await html2canvas(artwork, { backgroundColor: null, scale: 2, useCORS: true, logging: false });
+            const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+            const imageRatio = canvas.width / canvas.height;
+            const maxWidth = 186;
+            const maxHeight = 277;
+            let width = maxWidth;
+            let height = width / imageRatio;
+            if (height > maxHeight) {
+                height = maxHeight;
+                width = height * imageRatio;
+            }
+            const x = (210 - width) / 2;
+            const y = (297 - height) / 2;
+            pdf.setFillColor(247, 249, 252);
+            pdf.rect(0, 0, 210, 297, "F");
+            pdf.addImage(canvas.toDataURL("image/png"), "PNG", x, y, width, height, undefined, "FAST");
+            pdf.save(`AUSSC-council-identity-qr-${user.student_id || user.id}.pdf`);
+        } catch {
+            setCredentialMessage("The council pass PDF could not be downloaded. Please try again.");
         }
     }
 
@@ -258,12 +378,16 @@ export default function CouncilProfile() {
                         <h1>Your profile</h1>
                         <p>Manage your personal details and profile photos.</p>
                     </div>
-                    {!editing && <button className="admin-primary-action profile-edit-trigger" type="button" onClick={beginEditing}>Edit profile</button>}
+                    <div className="council-profile-heading-actions">
+                        {isCouncilMember && <a className="admin-secondary-action" href="#council-class-schedule">Class schedule</a>}
+                        {!editing && <button className="admin-primary-action profile-edit-trigger" type="button" onClick={beginEditing}>Edit profile</button>}
+                    </div>
                 </header>
 
                 {connectionNote && <p className="council-profile-note" role="status">The latest profile could not be loaded from the server. Check your connection before saving changes.</p>}
                 {notice && <p className="profile-form-message is-success" role="status">{notice}</p>}
                 {error && !editing && <p className="profile-form-message is-error" role="alert">{error}</p>}
+                {loading && <p className="council-profile-refresh" role="status">Refreshing account details…</p>}
 
                 <section className="council-profile-card" aria-label="Account profile">
                     <div className="council-profile-banner" style={coverImage ? { backgroundImage: `linear-gradient(90deg,rgba(5,19,35,.2),rgba(5,19,35,.05)),url("${coverImage}")` } : undefined} />
@@ -280,15 +404,15 @@ export default function CouncilProfile() {
                         <form className="profile-edit-form" onSubmit={saveProfile}>
                             {error && <p className="profile-form-message is-error" role="alert">{error}</p>}
                             <section className="profile-photo-edit-section" aria-labelledby="profile-photo-heading">
-                                <div><span className="profile-edit-eyebrow">PERSONALIZE YOUR PROFILE</span><h3 id="profile-photo-heading">Photos</h3><p>Choose a photo to crop and reposition it. Use JPG, PNG, or WebP up to 5 MB. Saving a photo won’t submit your other profile edits.</p></div>
+                                <div><span className="profile-edit-eyebrow">PERSONALIZE YOUR PROFILE</span><h3 id="profile-photo-heading">Photos</h3><p>Choose a photo to crop and reposition it. Use this photo saves it immediately; Save changes can retry a failed upload.</p></div>
                                 <div className="profile-photo-edit-grid">
                                     <div className="profile-photo-control">
                                         <Avatar src={profileImage} initials={initials} className="is-editing" saving={photoSavingKind === "profile"} />
-                                        <div><label htmlFor="profile-picture-upload">Profile picture</label><input id="profile-picture-upload" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => choosePhoto(event, "profile")} />{user.profile_picture && !removeProfile && <button type="button" className="profile-remove-photo" onClick={() => setRemoveProfile(true)}>Remove picture</button>}</div>
+                                        <div><label htmlFor="profile-picture-upload">Profile picture</label><input id="profile-picture-upload" type="file" accept="image/jpeg,image/png,image/webp" disabled={saving} onChange={(event) => choosePhoto(event, "profile")} />{(user.profile_picture || pendingPhotoFiles.profile) && !removeProfile && <button type="button" className="profile-remove-photo" disabled={saving} onClick={() => { setPendingPhotoFiles((current) => ({ ...current, profile: null })); setRemoveProfile(true); }}>Remove picture</button>}</div>
                                     </div>
                                     <div className="profile-cover-control">
                                         <div className={`profile-cover-preview${coverIsLoading ? " is-skeleton" : ""}`} style={coverImage ? { backgroundImage: `url("${coverImage}")` } : undefined} aria-busy={coverIsLoading || undefined}><span>Cover photo</span></div>
-                                        <label htmlFor="cover-photo-upload">Choose cover photo</label><input id="cover-photo-upload" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => choosePhoto(event, "cover")} />{user.cover_photo && !removeCover && <button type="button" className="profile-remove-photo" onClick={() => setRemoveCover(true)}>Remove cover</button>}
+                                        <label htmlFor="cover-photo-upload">Choose cover photo</label><input id="cover-photo-upload" type="file" accept="image/jpeg,image/png,image/webp" disabled={saving} onChange={(event) => choosePhoto(event, "cover")} />{(user.cover_photo || pendingPhotoFiles.cover) && !removeCover && <button type="button" className="profile-remove-photo" disabled={saving} onClick={() => { setPendingPhotoFiles((current) => ({ ...current, cover: null })); setRemoveCover(true); }}>Remove cover</button>}
                                     </div>
                                 </div>
                             </section>
@@ -314,12 +438,50 @@ export default function CouncilProfile() {
                     )}
                 </section>
 
-                {!editing && <section className="council-profile-actions" aria-label="Account links">
-                    <div><h2>Stay involved</h2><p>Keep track of your event registrations and discover what’s happening on campus.</p></div>
-                    <div className="council-profile-links"><Link className="register-button" to={primaryWorkspace.to}>{primaryWorkspace.label}</Link><Link className="council-profile-secondary" to="/events">Browse events <span aria-hidden="true">→</span></Link></div>
+                {isCouncilMember && <ClassScheduleEditor />}
+
+                {!editing && isCouncilMember && <section className="council-member-participation-card" aria-labelledby="council-member-participation-title">
+                    <header><div><span className="eyebrow">COUNCIL PARTICIPATION</span><h2 id="council-member-participation-title">Event participation</h2><p>Your event responses help with planning. They are separate from task assignments and attendance records.</p></div></header>
+                    {participationLoading ? <p className="council-profile-section-status" role="status">Loading your event participation…</p>
+                        : participationError ? <p className="profile-form-message is-error" role="alert">{participationError}</p>
+                            : councilResponses.length ? <div className="council-member-participation-list">{councilResponses.slice(0, 4).map((response) => <article key={response.id}>
+                                <div><span className={`member-assignment-status is-${response.status}`}>{response.status}</span><h3>{response.event?.title || "Council event"}</h3><p>{response.event?.location || "Location to be confirmed"} · {formatDate(response.event?.start_date)}</p></div>
+                                <Link to={`/events/${response.event?.id}`}>Event details <span aria-hidden="true">→</span></Link>
+                            </article>)}</div>
+                                : <div className="council-member-participation-empty"><h3>No event invitations yet</h3><p>Invitations shared with the council will appear here. Accepting one does not count as attendance.</p></div>}
+                    {!participationLoading && <Link className="council-profile-secondary council-member-participation-link" to="/my-events">Manage participation <span aria-hidden="true">→</span></Link>}
                 </section>}
 
-                {loading && <p className="council-profile-refresh" role="status">Refreshing account details…</p>}
+                {!editing && isCouncilMember && <>
+                    <section className="council-member-attendance-card" aria-labelledby="council-member-attendance-title"><div><span className="eyebrow">MY ATTENDANCE</span><h2 id="council-member-attendance-title">Council event history</h2><p>Attendance officers can record your pass; self-service actions appear only when the event allows them.</p></div>
+                        {councilAttendanceEvents.length ? <div className="council-member-attendance-list">{councilAttendanceEvents.map((event) => <article key={event.id}><div><strong>{event.title}</strong><span>{event.location} · {formatDate(event.start_date)}</span><small>{event.attendance?.time_out ? `Checked out ${formatDate(event.attendance.time_out)}` : event.attendance?.time_in ? `Checked in ${formatDate(event.attendance.time_in)}` : "No attendance recorded"}</small></div>{event.attendance?.time_out ? <span className="attendance-state is-complete">Complete</span> : event.attendance?.currently_present && event.self_service_checkout ? <button className="admin-secondary-action" type="button" onClick={() => recordCouncilSelfAttendance(event.id)} disabled={memberAttendanceBusy === String(event.id)}>{memberAttendanceBusy === String(event.id) ? "Saving…" : "Check out"}</button> : !event.attendance && event.self_service_checkin ? <button className="admin-primary-action" type="button" onClick={() => recordCouncilSelfAttendance(event.id)} disabled={memberAttendanceBusy === String(event.id)}>{memberAttendanceBusy === String(event.id) ? "Saving…" : "Check in"}</button> : <span className="attendance-state">Officer scan</span>}</article>)}</div> : <p className="council-member-attendance-empty">No council event attendance has been recorded yet.</p>}
+                        {credentialMessage && <p role="status" className="profile-form-message">{credentialMessage}</p>}
+                    </section>
+                </>}
+
+                {!editing && isCouncilMember && <section className="council-member-pass-card" aria-labelledby="council-pass-title">
+                    <div className="council-member-pass-intro"><span className="eyebrow">COUNCIL ATTENDANCE</span><h2 id="council-pass-title">Your reusable council QR</h2><p>One member identity QR for council event time-in and time-out. Staff select the event when they scan it; participation and class schedules stay separate.</p></div>
+                    {identityQrValue ? <>
+                        <div className="council-member-pass-artwork" id="council-pass-artwork">
+                            <header className="council-member-pass-brand"><img src="/assets/aussc-header-light.png" alt="Araullo University South Student Council" /><span>COUNCIL<br />MEMBER PASS</span></header>
+                            <div className="council-member-pass-identity">
+                                <div className="council-member-pass-nameplate"><span>COUNCIL MEMBER IDENTITY</span><h3>{`${user.first_name || ""} ${user.last_name || ""}`.trim() || "Council member"}</h3><p>{[councilPositionNames[user.council_position], committeeLabels[user.committee_assignment]].filter(Boolean).join(" · ") || (user.role === "admin" ? "Council administrator" : "Council member")}</p></div>
+                            </div>
+                            <div className="council-member-pass-code-row">
+                                <div className="council-member-pass-code"><QRCode value={identityQrValue} size={196} level="H" bgColor="#ffffff" fgColor="#0b1f3a" /></div>
+                                <div className="council-member-pass-code-copy"><span>REUSABLE MEMBER QR</span><h4>One council identity.<br />Every event.</h4><p>This QR identifies your council account only. Attendance is recorded for the event selected by authorized staff.</p></div>
+                            </div>
+                            <footer className="council-member-pass-footer"><strong>FOR THE STUDENTS, WE REMAIN</strong><span>Present this pass to the attendance officer.</span></footer>
+                        </div>
+                        <div className="council-member-pass-actions"><button id="council-pass-download-action" type="button" className="admin-primary-action" onClick={downloadAttendanceCredential}>Download council QR</button></div>
+                    </> : <p role="status" className={`profile-form-message${credentialMessage ? " is-error" : ""}`}>{credentialMessage || (user.student_id ? "Loading your reusable council QR…" : "Add a valid account ID before generating your council QR.")}</p>}
+                </section>}
+
+                {!editing && <footer className="council-profile-actions" aria-label="Stay involved">
+                    <div><h2>Stay involved</h2><p>Review council event invitations, update your class schedule, and keep student attendance history separate.</p></div>
+                    <div className="council-profile-links"><Link className="register-button" to={primaryWorkspace.to}>{primaryWorkspace.label}</Link><Link className="council-profile-secondary" to="/events">Browse events <span aria-hidden="true">→</span></Link></div>
+                </footer>}
+
             </main>
             {cropRequest && <ImageCropDialog file={cropRequest.file} kind={cropRequest.kind} onCancel={() => setCropRequest(null)} onApply={applyCroppedPhoto} />}
         </>

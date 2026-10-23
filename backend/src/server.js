@@ -11,18 +11,23 @@ import { GridFSBucket, MongoClient, ObjectId } from "mongodb";
 import multer from "multer";
 import { fileTypeFromBuffer } from "file-type";
 import { summarizePublicationPerformance } from "./publicationWorkflow.js";
+import { attendanceScanAction, isAuthorizedCouncilMember, transitionAttendanceRecord } from "./attendanceWorkflow.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "../..");
 const uploadRoot = path.resolve(process.env.UPLOAD_DIR || path.join(rootDir, "uploads"));
 const port = Number(process.env.PORT || 3000);
+const isProduction = process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
+const configuredSessionSecret = (process.env.SESSION_SECRET || "").trim();
+const sessionCookieSecure = process.env.SESSION_COOKIE_SECURE === "true" || isProduction;
 const mongoUri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017";
 const databaseName = process.env.MONGODB_DATABASE || "university_events";
+const localFrontendOrigins = "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174";
 const allowedOrigins = [
-    ...(process.env.FRONTEND_ORIGINS || "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174").split(","),
+    ...(process.env.FRONTEND_ORIGINS || (isProduction ? "" : localFrontendOrigins)).split(","),
     process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "",
     process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : ""
-].map((origin) => origin.trim()).filter(Boolean);
+].map((origin) => origin.trim()).filter((origin) => Boolean(origin) && !(isProduction && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)));
 
 const mongoOptions = {
     serverSelectionTimeoutMS: Number(process.env.MONGODB_CONNECT_TIMEOUT_MS || 10000),
@@ -36,11 +41,19 @@ let profileMedia;
 let committeeSubmissionFiles;
 let databaseReady = false;
 let databaseConnectionPromise;
-const passwordResetIpWindows = new Map();
 
 const app = express();
 app.disable("x-powered-by");
-app.set("trust proxy", 1);
+app.set("trust proxy", isProduction ? 1 : false);
+app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(self), microphone=(), geolocation=()");
+    if (req.path === "/api" || req.path.startsWith("/api/")) res.setHeader("Cache-Control", "no-store");
+    if (isProduction) res.setHeader("Strict-Transport-Security", "max-age=31536000");
+    next();
+});
 app.use((req, res, next) => cors({
     origin(origin, callback) {
         const requestOrigin = `${req.protocol}://${req.get("host")}`;
@@ -49,18 +62,33 @@ app.use((req, res, next) => cors({
             try {
                 const parsedOrigin = new URL(origin);
                 const portNumber = Number(parsedOrigin.port);
-                isLocalViteOrigin = parsedOrigin.protocol === "http:" &&
+                isLocalViteOrigin = !isProduction && parsedOrigin.protocol === "http:" &&
                     ["localhost", "127.0.0.1"].includes(parsedOrigin.hostname) &&
                     portNumber >= 5173 && portNumber <= 5199;
             } catch { /* Invalid origins are rejected below. */ }
         }
         if (!origin || origin === requestOrigin || allowedOrigins.includes(origin) || isLocalViteOrigin) return callback(null, true);
-        return callback(new Error("Origin is not allowed."));
+        return callback(null, false);
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
 })(req, res, next));
+app.use((req, res, next) => {
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+    const origin = req.get("Origin");
+    if (!origin) return next(); // Non-browser clients may omit Origin; browser form/fetch requests include it.
+    const requestOrigin = `${req.protocol}://${req.get("host")}`;
+    let isLocalViteOrigin = false;
+    try {
+        const parsedOrigin = new URL(origin);
+        const portNumber = Number(parsedOrigin.port);
+        isLocalViteOrigin = !isProduction && parsedOrigin.protocol === "http:" &&
+            ["localhost", "127.0.0.1"].includes(parsedOrigin.hostname) && portNumber >= 5173 && portNumber <= 5199;
+    } catch { /* Invalid origins are rejected below. */ }
+    if (origin === requestOrigin || allowedOrigins.includes(origin) || isLocalViteOrigin) return next();
+    return fail(res, 403, "This request origin is not allowed.");
+});
 app.use(express.json({ limit: "1mb" }));
 app.use((req, res, next) => {
     req.requestId = crypto.randomUUID();
@@ -68,14 +96,14 @@ app.use((req, res, next) => {
     next();
 });
 app.use(async (req, res, next) => {
-    if (process.env.VERCEL !== "1") return next();
+    if (!isProduction) return next();
     // Let health checks run during an Atlas outage so they can return a safe
     // diagnostic category instead of this middleware's generic 503 response.
     if (req.path === "/api/health") return next();
 
     const missingConfiguration = [];
     if (!process.env.MONGODB_URI?.trim()) missingConfiguration.push("MONGODB_URI");
-    if ((process.env.SESSION_SECRET || "").trim().length < 32) missingConfiguration.push("SESSION_SECRET (at least 32 characters)");
+    if (configuredSessionSecret.length < 32) missingConfiguration.push("SESSION_SECRET (at least 32 characters)");
     if (missingConfiguration.length) {
         return fail(res, 503, "The API deployment is missing required environment variables.", {
             code: "DEPLOYMENT_CONFIGURATION_MISSING",
@@ -88,7 +116,7 @@ app.use(async (req, res, next) => {
         await ensureDatabaseConnection();
         return next();
     } catch (error) {
-        console.error("Vercel API could not connect to MongoDB:", error.message);
+        console.error("Vercel API could not connect to MongoDB:", error.name || "Error", mongoFailureCode(error));
         return fail(res, 503, "The database is temporarily unavailable. Check the MongoDB Atlas network access and API environment settings.", {
             code: mongoFailureCode(error),
             database: "mongodb",
@@ -132,14 +160,14 @@ class MongoSessionStore extends session.Store {
 const sessionStore = new MongoSessionStore();
 app.use(session({
     name: "university_events.sid",
-    secret: process.env.SESSION_SECRET || "local-development-secret-change-before-deployment",
+    secret: configuredSessionSecret || "local-development-secret-change-before-deployment",
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
     cookie: {
         httpOnly: true,
         sameSite: "lax",
-        secure: process.env.SESSION_COOKIE_SECURE === "true" || process.env.VERCEL === "1",
+        secure: sessionCookieSecure,
         maxAge: 24 * 60 * 60 * 1000
     }
 }));
@@ -171,6 +199,51 @@ const councilDepartments = new Set(["CAS", "CMA", "CELA", "CIT", "COE", "CCJE", 
 const excuseCategories = new Set(["competition", "recognized_organization", "internship", "medical_emergency"]);
 const councilCommittees = new Set(["executive", "publication", "program", "production"]);
 const registrationCode = () => `REG-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
+const studentEventQrMaxLength = 2200;
+const qrSigningSecret = configuredSessionSecret.length >= 32 ? configuredSessionSecret : crypto.randomBytes(32);
+const identityQr = (studentId) => {
+    const normalizedId = text(studentId).trim();
+    if (!/^[A-Za-z0-9-]{3,24}$/.test(normalizedId)) return null;
+    const unsignedValue = `AUSSC:IDENTITY:${normalizedId}`;
+    const signature = crypto.createHmac("sha256", qrSigningSecret).update(unsignedValue).digest("base64url");
+    return `${unsignedValue}:${signature}`;
+};
+function createStudentEventQr(event, user) {
+    const encodedPayload = Buffer.from(JSON.stringify({
+        version: 1,
+        event_id: event.id,
+        student_id: user.student_id,
+        title: event.title,
+        description: event.description
+    }), "utf8").toString("base64url");
+    const unsignedValue = `AUSSC:STUDENT_EVENT:${encodedPayload}`;
+    const signature = crypto.createHmac("sha256", qrSigningSecret).update(unsignedValue).digest("base64url");
+    const qrValue = `${unsignedValue}:${signature}`;
+    return qrValue.length <= studentEventQrMaxLength ? qrValue : null;
+}
+
+function readStudentEventQr(value) {
+    if (typeof value !== "string" || value.length > studentEventQrMaxLength) return null;
+    const match = /^AUSSC:STUDENT_EVENT:([A-Za-z0-9_-]+):([A-Za-z0-9_-]{43})$/.exec(value);
+    if (!match) return null;
+    const [, encodedPayload, suppliedSignature] = match;
+    const unsignedValue = `AUSSC:STUDENT_EVENT:${encodedPayload}`;
+    const expectedSignature = crypto.createHmac("sha256", qrSigningSecret).update(unsignedValue).digest("base64url");
+    const supplied = Buffer.from(suppliedSignature);
+    const expected = Buffer.from(expectedSignature);
+    if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return null;
+    try {
+        const payloadBuffer = Buffer.from(encodedPayload, "base64url");
+        if (payloadBuffer.toString("base64url") !== encodedPayload) return null;
+        const payload = JSON.parse(payloadBuffer.toString("utf8"));
+        if (payload?.version !== 1 || !Number.isSafeInteger(payload.event_id) || payload.event_id < 1 ||
+            !/^[A-Za-z0-9-]{3,24}$/.test(payload.student_id || "") || typeof payload.title !== "string" ||
+            payload.title.length > 255 || typeof payload.description !== "string" || !payload.description.trim()) return null;
+        return payload;
+    } catch {
+        return null;
+    }
+}
 const ok = (res, message, extra = {}) => res.status(200).json(toApi({ success: true, ...(message ? { message } : {}), ...extra }));
 const fail = (res, status, message, extra = {}) => res.status(status).json({ success: false, message, ...extra });
 
@@ -350,20 +423,34 @@ function safeDigestEqual(a, b) {
     return crypto.timingSafeEqual(Buffer.from(a, "hex"), Buffer.from(b, "hex"));
 }
 
-function resetRequestLimit(ip) {
-    const now = Date.now();
-    if (passwordResetIpWindows.size > 5000) {
-        for (const [key, window] of passwordResetIpWindows) {
-            if (now - window.startedAt >= 60 * 60 * 1000) passwordResetIpWindows.delete(key);
-        }
-    }
-    const window = passwordResetIpWindows.get(ip);
-    if (!window || now - window.startedAt >= 60 * 60 * 1000) {
-        passwordResetIpWindows.set(ip, { startedAt: now, count: 1 });
-        return false;
-    }
-    window.count += 1;
-    return window.count > 12;
+async function consumeRequestLimit(scope, subject, limit, windowMs) {
+    const now = new Date();
+    const nextResetAt = new Date(now.getTime() + windowMs);
+    const hmacKey = configuredSessionSecret || "local-development-secret-change-before-deployment";
+    const id = crypto.createHmac("sha256", hmacKey).update(`${scope}\0${subject}`).digest("hex");
+    const result = await collections.rateLimits.findOneAndUpdate(
+        { _id: id },
+        [{ $set: {
+            count: { $cond: [{ $gt: ["$resetAt", now] }, { $add: [{ $ifNull: ["$count", 0] }, 1] }, 1] },
+            resetAt: { $cond: [{ $gt: ["$resetAt", now] }, "$resetAt", nextResetAt] }
+        } }],
+        { upsert: true, returnDocument: "after" }
+    );
+    const record = result?.value && typeof result.value === "object" ? result.value : result;
+    const retryAfterSeconds = Math.max(1, Math.ceil((new Date(record.resetAt).getTime() - now.getTime()) / 1000));
+    return { limited: Number(record.count) > limit, retryAfterSeconds };
+}
+
+function requestIp(req) {
+    return req.ip || req.socket?.remoteAddress || "unknown";
+}
+
+function rejectRateLimited(res, rateLimits) {
+    const blocked = rateLimits.filter((result) => result.limited);
+    if (!blocked.length) return false;
+    res.setHeader("Retry-After", String(Math.max(...blocked.map((result) => result.retryAfterSeconds))));
+    fail(res, 429, "Too many requests. Please wait before trying again.");
+    return true;
 }
 
 async function sendPasswordResetEmail(email, code) {
@@ -393,9 +480,9 @@ async function sendPasswordResetEmail(email, code) {
 
 app.get("/api/health", async (req, res) => {
     const missingConfiguration = [];
-    if (process.env.VERCEL === "1") {
+    if (isProduction) {
         if (!process.env.MONGODB_URI?.trim()) missingConfiguration.push("MONGODB_URI");
-        if ((process.env.SESSION_SECRET || "").trim().length < 32) missingConfiguration.push("SESSION_SECRET");
+        if (configuredSessionSecret.length < 32) missingConfiguration.push("SESSION_SECRET");
     }
     if (missingConfiguration.length) {
         return fail(res, 503, "The API deployment is missing required environment variables.", {
@@ -408,28 +495,11 @@ app.get("/api/health", async (req, res) => {
         await db.command({ ping: 1 });
         await collections.users.findOne({}, { projection: { _id: 1 } });
 
-        // Exercise the collection operations used by login sessions without
-        // touching a real user's session. A TTL expiry cleans up if deletion fails.
-        const probeId = `health-${crypto.randomUUID()}`;
-        let probeInserted = false;
-        try {
-            await collections.sessions.insertOne({
-                _id: probeId,
-                data: {},
-                expiresAt: new Date(Date.now() + 60_000)
-            });
-            probeInserted = true;
-            await collections.sessions.findOne({ _id: probeId }, { projection: { _id: 1 } });
-            await collections.sessions.updateOne({ _id: probeId }, { $set: { updatedAt: new Date() } });
-        } finally {
-            if (probeInserted) await collections.sessions.deleteOne({ _id: probeId }).catch(() => {});
-        }
-
         databaseReady = true;
         return ok(res, null, { status: "ready", database: "mongodb" });
     } catch (error) {
         databaseReady = false;
-        console.error("MongoDB health check failed:", error.message);
+        console.error("MongoDB health check failed:", error.name || "Error", mongoFailureCode(error));
         return fail(res, 503, "MongoDB is not ready. Use the diagnostic code to check Atlas access, credentials, and database permissions.", {
             status: "not_ready", database: "mongodb", code: mongoFailureCode(error), request_id: req.requestId
         });
@@ -460,8 +530,9 @@ app.post("/api/auth/register", async (req, res, next) => {
     if (![studentId, first, last, email, password, course, year].every(Boolean)) return fail(res, 422, "Please complete all required fields.");
     if (!studentIdPattern.test(studentId)) return fail(res, 422, "Student ID must use the format 01-1234-123456.");
     if (!/^[^\s@]+@phinmaed\.com$/i.test(email)) return fail(res, 422, "Please use your @phinmaed.com email address.");
-    if (password.length < 8) return fail(res, 422, "Password must be at least 8 characters.");
+    if (password.length < 8 || Buffer.byteLength(password, "utf8") > 72) return fail(res, 422, "Password must be at least 8 characters and no more than 72 UTF-8 bytes.");
     try {
+        if (rejectRateLimited(res, [await consumeRequestLimit("register-ip", requestIp(req), 12, 60 * 60 * 1000)])) return;
         const user = {
             id: await nextId("users"), student_id: studentId, first_name: first, last_name: last,
             email, passwordHash: await bcrypt.hash(password, 12), course, year_level: year,
@@ -481,7 +552,14 @@ app.post("/api/auth/login", async (req, res, next) => {
     if (!identifier || !password) return fail(res, 422, "Please enter your email or student ID and password.");
     if (identifier.includes("@") && !/^[^\s@]+@phinmaed\.com$/i.test(identifier)) return fail(res, 422, "Please use your @phinmaed.com email address.");
     if (!identifier.includes("@") && !studentIdPattern.test(identifier)) return fail(res, 422, "Student ID must use the format 01-1234-123456.");
+    if (Buffer.byteLength(password, "utf8") > 72) return fail(res, 422, "Password is too long.");
     try {
+        const ip = requestIp(req);
+        const limits = await Promise.all([
+            consumeRequestLimit("login-ip", ip, 60, 15 * 60 * 1000),
+            consumeRequestLimit("login-ip-identifier", `${ip}\0${identifier.toLowerCase()}`, 10, 15 * 60 * 1000)
+        ]);
+        if (rejectRateLimited(res, limits)) return;
         const user = await collections.users.findOne({
             $or: [
                 { email: identifier.toLowerCase() },
@@ -507,9 +585,9 @@ app.post("/api/auth/forgot-password/request", async (req, res, next) => {
     const email = text(req.body.email).trim().toLowerCase();
     if (!/^[^\s@]+@phinmaed\.com$/i.test(email)) return fail(res, 422, "Use your @phinmaed.com email address.");
     if (!process.env.BREVO_API_KEY || !process.env.BREVO_SENDER_EMAIL || (process.env.PASSWORD_RESET_SECRET || "").length < 32) return fail(res, 503, "Password reset is not configured. Set the Brevo API key, verified sender, and a 32-character PASSWORD_RESET_SECRET in backend/.env.");
-    if (resetRequestLimit(req.ip || req.socket.remoteAddress || "unknown")) return fail(res, 429, "Too many reset requests. Please try again later.");
 
     try {
+        if (rejectRateLimited(res, [await consumeRequestLimit("password-reset-request-ip", requestIp(req), 12, 60 * 60 * 1000)])) return;
         const user = await collections.users.findOne({ email });
         if (!user) return ok(res, resetRequestMessage);
 
@@ -540,7 +618,7 @@ app.post("/api/auth/forgot-password/request", async (req, res, next) => {
         try {
             await sendPasswordResetEmail(email, code);
         } catch (emailError) {
-            console.error("Password reset email could not be sent:", emailError.message);
+            console.error("Password reset email could not be sent:", emailError?.name || "Error");
             await collections.passwordResetOtps.updateOne(
                 { email, codeHash },
                 { $set: { requestCount, lastSentAt: new Date(now.getTime() - 60_001) }, $unset: { codeHash: "", codeExpiresAt: "" } }
@@ -558,6 +636,7 @@ app.post("/api/auth/forgot-password/verify", async (req, res, next) => {
     if (!/^[^\s@]+@phinmaed\.com$/i.test(email) || !/^\d{6}$/.test(code)) return fail(res, 422, "Enter the PHINMA email and 6-digit code.");
     if ((process.env.PASSWORD_RESET_SECRET || "").length < 32) return fail(res, 503, "Password reset is not configured. Set PASSWORD_RESET_SECRET in backend/.env.");
     try {
+        if (rejectRateLimited(res, [await consumeRequestLimit("password-reset-verify-ip", requestIp(req), 30, 60 * 60 * 1000)])) return;
         const now = new Date();
         const resetRecord = await collections.passwordResetOtps.findOne({ email, codeExpiresAt: { $gt: now } });
         if (!resetRecord || resetRecord.attempts >= 5 || !safeDigestEqual(passwordResetDigest(email, code), resetRecord.codeHash)) {
@@ -583,8 +662,9 @@ app.post("/api/auth/forgot-password/reset", async (req, res, next) => {
     const password = text(req.body.password);
     if (!/^[^\s@]+@phinmaed\.com$/i.test(email) || !resetToken) return fail(res, 422, "Restart password recovery and verify your email code.");
     if ((process.env.PASSWORD_RESET_SECRET || "").length < 32) return fail(res, 503, "Password reset is not configured. Set PASSWORD_RESET_SECRET in backend/.env.");
-    if (password.length < 8) return fail(res, 422, "Password must be at least 8 characters.");
+    if (password.length < 8 || Buffer.byteLength(password, "utf8") > 72) return fail(res, 422, "Password must be at least 8 characters and no more than 72 UTF-8 bytes.");
     try {
+        if (rejectRateLimited(res, [await consumeRequestLimit("password-reset-finish-ip", requestIp(req), 12, 60 * 60 * 1000)])) return;
         const now = new Date();
         const record = await collections.passwordResetOtps.findOne({ email, codeExpiresAt: { $gt: now } });
         if (!record || !record.resetTokenHash || !safeDigestEqual(passwordResetDigest(email, resetToken), record.resetTokenHash)) {
@@ -605,7 +685,7 @@ app.post("/api/auth/forgot-password/reset", async (req, res, next) => {
 app.post("/api/auth/logout", (req, res, next) => {
     req.session.destroy((error) => {
         if (error) return next(error);
-        res.clearCookie("university_events.sid", { httpOnly: true, sameSite: "lax", secure: process.env.SESSION_COOKIE_SECURE === "true" });
+        res.clearCookie("university_events.sid", { httpOnly: true, sameSite: "lax", secure: sessionCookieSecure });
         return ok(res, "Logged out successfully.");
     });
 });
@@ -729,6 +809,18 @@ app.get("/api/events/updates", async (_req, res, next) => {
     } catch (error) { return next(error); }
 });
 
+app.get("/api/announcements/list", async (_req, res, next) => {
+    try {
+        const announcements = await collections.publicAnnouncements.find({ status: "published" }, {
+            projection: { id: 1, title: 1, category: 1, content: 1, published_at: 1, public_updated_at: 1, created_at: 1 }
+        })
+            .sort({ public_updated_at: -1, published_at: -1 })
+            .limit(50)
+            .toArray();
+        return ok(res, null, { announcements });
+    } catch (error) { return next(error); }
+});
+
 app.get("/api/events/list", async (_req, res, next) => {
     try {
         const events = await collections.events.find({ status: { $ne: "cancelled" }, ...publishedEventQuery() }).sort({ start_date: -1 }).toArray();
@@ -754,9 +846,46 @@ app.get("/api/events/event", async (req, res, next) => {
     const id = Number(req.query.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 422, "Event ID is required.");
     try {
-        const event = await collections.events.findOne({ id, $or: [{ publication_status: "published" }, { publication_status: { $exists: false } }, { publication_status: "cancelled" }] });
+        let event = await collections.events.findOne({ id, $or: [{ publication_status: "published" }, { publication_status: { $exists: false } }, { publication_status: "cancelled" }] });
+        let councilResponse = null;
+        let canRespond = false;
+        let studentParticipation = null;
+        let studentCanParticipate = false;
+        let studentCanGenerateQr = false;
+        if (req.session?.userId) {
+            const member = await collections.users.findOne({ id: Number(req.session.userId) }, { projection: { id: 1, role: 1, student_id: 1, council_position: 1, committee_assignment: 1 } });
+            const invitedCouncilMember = isEventInvitee(member, event);
+            canRespond = invitedCouncilMember && isCouncilParticipationOpen(event);
+            if (invitedCouncilMember) {
+                councilResponse = await collections.eventResponses.findOne({ event_id: id, user_id: member.id });
+                if (!event && councilResponse) event = await collections.events.findOne({ id, status: { $nin: ["cancelled", "archived"] }, publication_status: { $nin: ["cancelled", "archived"] } });
+            }
+            if (member?.role === "student" && !canRespond) {
+                studentParticipation = await collections.studentEventParticipations.findOne({ event_id: id, user_id: member.id });
+                studentCanParticipate = Boolean(event && !["cancelled", "completed", "archived"].includes(event.status) && event.publication_status !== "cancelled" && event.publication_status !== "archived" && new Date(event.end_date) >= new Date());
+                studentCanGenerateQr = Boolean(studentCanParticipate && studentParticipation?.status === "accepted" && /^[A-Za-z0-9-]{3,24}$/.test(member.student_id || ""));
+            }
+        }
         if (!event) return fail(res, 404, "Event not found.");
-        return ok(res, null, { event: withEventStatus(event) });
+        const studentCanSignInForParticipation = Boolean(!req.session?.userId && !["cancelled", "completed", "archived"].includes(event.status) && event.publication_status !== "cancelled" && event.publication_status !== "archived" && new Date(event.end_date) >= new Date());
+        return ok(res, null, { event: withEventStatus(event), council_can_respond: canRespond, council_response: councilResponse ? { id: councilResponse.id, status: councilResponse.status, responded_at: councilResponse.responded_at || null } : null, student_can_participate: studentCanParticipate, student_needs_sign_in: studentCanSignInForParticipation, student_participation: studentParticipation ? { status: studentParticipation.status, agreed_at: studentParticipation.agreed_at || null, updated_at: studentParticipation.updated_at || null } : null, student_can_generate_qr: studentCanGenerateQr });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/attendance/student-event-qr", signedIn, async (req, res, next) => {
+    const eventId = Number(req.query.event_id);
+    if (!Number.isInteger(eventId) || eventId < 1) return fail(res, 422, "Choose a valid event.");
+    try {
+        const user = await collections.users.findOne({ id: Number(req.session.userId) }, { projection: { id: 1, role: 1, student_id: 1, council_position: 1, committee_assignment: 1 } });
+        if (!user || user.role !== "student" || isAuthorizedCouncilMember(user, councilPositions, councilCommittees)) return fail(res, 403, "Event-specific attendance QRs are available to student accounts. Council members use their reusable identity QR.");
+        if (!/^[A-Za-z0-9-]{3,24}$/.test(user.student_id || "")) return fail(res, 422, "Add a valid student ID to your profile before generating an event QR.");
+        const event = await collections.events.findOne({ id: eventId, ...publishedEventQuery(), status: { $nin: ["cancelled", "completed", "archived"] }, publication_status: { $nin: ["cancelled", "archived"] } });
+        if (!event || !event.end_date || new Date(event.end_date) < new Date()) return fail(res, 404, "This event is not available for a student attendance QR.");
+        const participation = await collections.studentEventParticipations.findOne({ event_id: eventId, user_id: user.id, status: "accepted" }, { projection: { id: 1 } });
+        if (!participation) return fail(res, 403, "Agree to participate from this event page before generating its QR.");
+        const qrValue = createStudentEventQr(event, user);
+        if (!qrValue) return fail(res, 422, "This event description is too long to fit in a QR code. Contact the council for an attendance pass.");
+        return ok(res, "Event-specific attendance QR generated.", { qr_value: qrValue, event: { id: event.id, title: event.title, description: event.description } });
     } catch (error) { return next(error); }
 });
 
@@ -770,51 +899,8 @@ app.get("/api/events/highlights", async (req, res, next) => {
     } catch (error) { return next(error); }
 });
 
-// Event registration and member passes
-app.post("/api/registration/create", signedIn, async (req, res, next) => {
-    const eventId = Number(req.body.event_id);
-    if (!Number.isInteger(eventId) || eventId < 1) return fail(res, 422, "A valid event is required.");
-    if (req.session.role !== "student") return fail(res, 403, "Only student accounts can register for events.");
-    try {
-        const event = await collections.events.findOne({ id: eventId, ...publishedEventQuery() });
-        if (!event) return fail(res, 404, "Event not found.");
-        const now = new Date();
-        if (event.status === "cancelled" || event.start_date <= now || (event.registration_deadline && event.registration_deadline < now)) {
-            return fail(res, 422, "Registration for this event is closed.");
-        }
-        const reservation = await collections.events.updateOne(
-            {
-                id: eventId,
-                publication_status: { $in: ["published", null] },
-                status: { $ne: "cancelled" },
-                start_date: { $gt: now },
-                $and: [
-                    { $or: [{ registration_deadline: null }, { registration_deadline: { $exists: false } }, { registration_deadline: { $gte: now } }] },
-                    { $or: [{ capacity: { $lte: 0 } }, { $expr: { $lt: [{ $ifNull: ["$registration_count", 0] }, "$capacity"] } }] }
-                ]
-            },
-            { $inc: { registration_count: 1 } }
-        );
-        if (!reservation.modifiedCount) {
-            const refreshed = await collections.events.findOne({ id: eventId });
-            if (refreshed && Number(refreshed.capacity) > 0 && Number(refreshed.registration_count || 0) >= Number(refreshed.capacity)) return fail(res, 409, "This event is already full.");
-            return fail(res, 422, "Registration for this event is closed.");
-        }
-        const code = registrationCode();
-        const registration = {
-            id: await nextId("registrations"), user_id: Number(req.session.userId), event_id: eventId,
-            registration_code: code, status: "registered", registered_at: new Date()
-        };
-        try {
-            await collections.registrations.insertOne(registration);
-        } catch (error) {
-            await collections.events.updateOne({ id: eventId }, { $inc: { registration_count: -1 } });
-            if (duplicateKey(error)) return fail(res, 409, "You are already registered for this event.");
-            throw error;
-        }
-        return ok(res, "Registration successful.", { registration_code: code });
-    } catch (error) { return next(error); }
-});
+// The old student sign-up endpoint remains in place for compatibility but no longer creates records.
+app.post("/api/registration/create", signedIn, (_req, res) => fail(res, 410, "Student event sign-ups are no longer used. Event attendance is recorded separately at the event."));
 
 app.get("/api/registration/my", signedIn, async (req, res, next) => {
     try {
@@ -822,69 +908,133 @@ app.get("/api/registration/my", signedIn, async (req, res, next) => {
         const eventIds = registrations.map((registration) => registration.event_id);
         const events = await collections.events.find({ id: { $in: eventIds } }).toArray();
         const eventMap = new Map(events.map((event) => [event.id, event]));
-        const rows = registrations.map((registration) => {
+        const rows = await Promise.all(registrations.map(async (registration) => {
             const event = eventMap.get(registration.event_id);
             if (!event) return null;
+            const attendance = await collections.attendance.findOne({ $or: [{ registration_id: registration.id }, { participant_key: `event:${event.id}:user:${registration.user_id}` }] }, { sort: { time_in: -1 } });
             return {
                 registration_id: registration.id, registration_code: registration.registration_code,
                 status: registration.status, registered_at: registration.registered_at,
+                attendance: attendance ? { time_in: attendance.time_in, time_out: attendance.time_out || null, currently_present: !attendance.time_out } : null,
                 event_id: event.id, title: event.title, description: event.description,
                 location: event.location, start_date: event.start_date, end_date: event.end_date,
-                cover_image: event.cover_image, event_status: event.status
+                cover_image: event.cover_image, event_status: event.status,
+                self_service_checkin: Boolean(event.self_service_checkin), self_service_checkout: Boolean(event.self_service_checkout)
             };
-        }).filter(Boolean);
+        })).then((rows) => rows.filter(Boolean));
         return ok(res, null, { events: rows });
     } catch (error) { return next(error); }
 });
 
-// Council member event assignments. Duplicate sign-ups are blocked by the unique MongoDB index.
+// Event responses are kept separate from task assignments and attendance.
 app.get("/api/participation/mine", signedIn, async (req, res, next) => {
     try {
-        const assignments = await collections.eventAssignments.find({ user_id: Number(req.session.userId) }).sort({ created_at: -1 }).toArray();
-        const eventIds = [...new Set(assignments.map((assignment) => assignment.event_id))];
+        const member = await collections.users.findOne({ id: Number(req.session.userId) }, { projection: { id: 1, role: 1, council_position: 1, committee_assignment: 1 } });
+        if (!isAuthorizedCouncilMember(member, councilPositions, councilCommittees)) return fail(res, 403, "A current council appointment or committee assignment is required.");
+        const responses = await collections.eventResponses.find({ user_id: member.id }).sort({ created_at: -1 }).toArray();
+        const eventIds = [...new Set(responses.map((response) => response.event_id))];
         const events = await collections.events.find({ id: { $in: eventIds } }).toArray();
         const eventMap = new Map(events.map((event) => [event.id, event]));
-        return ok(res, null, { assignments: assignments.map((assignment) => {
-            const event = eventMap.get(assignment.event_id);
-            return event ? { ...assignment, event: { id: event.id, title: event.title, location: event.location, start_date: event.start_date, end_date: event.end_date, participation_requirements: event.participation_requirements, display_status: displayStatus(event) } } : null;
+        return ok(res, null, { responses: responses.map((response) => {
+            const event = eventMap.get(response.event_id);
+            return event ? { ...response, event: { id: event.id, title: event.title, description: event.description, location: event.location, start_date: event.start_date, end_date: event.end_date, display_status: displayStatus(event), publication_status: event.publication_status || "published" } } : null;
         }).filter(Boolean) });
     } catch (error) { return next(error); }
 });
 
-app.post("/api/participation/signup", signedIn, async (req, res, next) => {
-    if (req.session.role !== "student") return fail(res, 403, "Only student members can sign up for event assignments.");
+app.post("/api/participation/respond", signedIn, async (req, res, next) => {
     const eventId = Number(req.body.event_id);
-    if (!Number.isInteger(eventId) || eventId < 1) return fail(res, 422, "Choose a valid event.");
+    const status = text(req.body.status).trim();
+    if (!Number.isSafeInteger(eventId) || eventId < 1 || !["accepted", "declined"].includes(status)) return fail(res, 422, "Choose an event and accept or decline participation.");
     try {
-        const event = await collections.events.findOne({ id: eventId, ...publishedEventQuery() });
+        const member = await collections.users.findOne({ id: Number(req.session.userId) }, { projection: { id: 1, role: 1, council_position: 1, committee_assignment: 1 } });
+        if (!isAuthorizedCouncilMember(member, councilPositions, councilCommittees)) return fail(res, 403, "Only current council members can update participation.");
+        const event = await collections.events.findOne({ id: eventId });
+        if (!event || ["cancelled", "archived"].includes(event.status) || ["cancelled", "archived"].includes(event.publication_status)) return fail(res, 404, "This event is unavailable for participation.");
+        if (!isEventInvitee(member, event)) return fail(res, 403, "You are not included in this event’s council invitation.");
+        if (!isCouncilParticipationOpen(event)) return fail(res, 409, "Council participation responses are closed for this event.");
         const now = new Date();
-        if (!event || event.participation_open === false || event.status === "cancelled" || event.start_date <= now || (event.registration_deadline && event.registration_deadline < now)) {
-            return fail(res, 422, "Sign-ups for this event are closed.");
-        }
-        const user = await collections.users.findOne({ id: Number(req.session.userId) }, { projection: { id: 1, first_name: 1, last_name: 1, email: 1, student_id: 1, course: 1, year_level: 1 } });
-        if (!user) return fail(res, 401, "Your account could not be found. Please sign in again.");
-        const eligibleCourses = event.eligible_courses || [];
-        const eligibleYears = event.eligible_year_levels || [];
-        if ((eligibleCourses.length && !eligibleCourses.some((course) => course.toLowerCase() === text(user.course).toLowerCase())) || (eligibleYears.length && !eligibleYears.includes(text(user.year_level)))) return fail(res, 403, "Your course or year level does not meet this event’s participation requirements.");
-        if (event.require_event_registration && !await collections.registrations.findOne({ user_id: user.id, event_id: event.id, status: { $in: ["registered", "attended"] } }, { projection: { id: 1 } })) return fail(res, 403, "Register for this event before requesting an official assignment.");
-        const assignment = { id: await nextId("event_assignments"), user_id: user.id, event_id: event.id, status: "pending", created_at: now };
-        const assignmentCapacity = Number(event.assignment_capacity || 0);
-        if (assignmentCapacity > 0) {
-            const reservation = await collections.events.updateOne({ id: eventId, $or: [{ assignment_count: { $lt: assignmentCapacity } }, { assignment_count: { $exists: false } }] }, { $inc: { assignment_count: 1 } });
-            if (!reservation.modifiedCount) return fail(res, 409, "All event assignment positions are filled.");
-        }
-        try { await collections.eventAssignments.insertOne(assignment); }
-        catch (error) {
-            if (assignmentCapacity > 0) await collections.events.updateOne({ id: eventId }, { $inc: { assignment_count: -1 } });
-            if (duplicateKey(error)) return fail(res, 409, "You already signed up for this event assignment.");
-            throw error;
-        }
-        return ok(res, "Your event assignment sign-up was submitted.", { assignment: { ...assignment, event: { id: event.id, title: event.title, start_date: event.start_date, location: event.location, participation_requirements: event.participation_requirements } } });
-    } catch (error) {
-        if (duplicateKey(error)) return fail(res, 409, "You already signed up for this event assignment.");
-        return next(error);
-    }
+        const responseFilter = { event_id: eventId, user_id: member.id };
+        try {
+            await collections.eventResponses.updateOne(responseFilter, { $setOnInsert: { id: await nextId("event_responses"), event_id: eventId, user_id: member.id, status: "pending", created_at: now, history: [] } }, { upsert: true });
+        } catch (error) { if (!duplicateKey(error)) throw error; }
+        const current = await collections.eventResponses.findOne(responseFilter);
+        const updated = await collections.eventResponses.updateOne({ ...responseFilter, id: current.id }, {
+            $set: { status, responded_at: now, updated_at: now, response_source: "member" },
+            $push: { history: { status, changed_at: now, changed_by: member.id, source: "member" } }
+        });
+        if (!updated.matchedCount) return fail(res, 409, "This participation status changed. Refresh and try again.");
+        return ok(res, status === "accepted" ? "Participation accepted." : "Participation declined.", { response: { id: current.id, event_id: eventId, user_id: member.id, status, responded_at: now } });
+    } catch (error) { return next(error); }
 });
+
+app.post("/api/participation/student/respond", signedIn, async (req, res, next) => {
+    const eventId = Number(req.body.event_id);
+    const status = text(req.body.status).trim();
+    if (!Number.isSafeInteger(eventId) || eventId < 1 || !["accepted", "withdrawn"].includes(status)) return fail(res, 422, "Choose an event and confirm or withdraw your participation.");
+    try {
+        const student = await collections.users.findOne({ id: Number(req.session.userId) }, { projection: { id: 1, role: 1, student_id: 1, council_position: 1, committee_assignment: 1 } });
+        if (!student || student.role !== "student" || isAuthorizedCouncilMember(student, councilPositions, councilCommittees)) return fail(res, 403, "Student event participation is available to student accounts. Council members use council participation.");
+        const event = await collections.events.findOne({ id: eventId, ...publishedEventQuery(), status: { $nin: ["cancelled", "completed", "archived"] }, publication_status: { $nin: ["cancelled", "archived"] } });
+        if (!event || !event.end_date || new Date(event.end_date) < new Date()) return fail(res, 404, "This event is unavailable for participation.");
+        const filter = { event_id: eventId, user_id: student.id };
+        const current = await collections.studentEventParticipations.findOne(filter);
+        if (status === "withdrawn" && current?.status !== "accepted") return fail(res, 409, "Agree to participate before withdrawing.");
+        const now = new Date();
+        const update = {
+            $set: { status, updated_at: now, ...(status === "accepted" ? { agreed_at: now } : { withdrawn_at: now }) },
+            $setOnInsert: { id: await nextId("student_event_participations"), event_id: eventId, user_id: student.id, created_at: now }
+        };
+        try {
+            if (status === "accepted") await collections.studentEventParticipations.updateOne(filter, update, { upsert: true });
+            else await collections.studentEventParticipations.updateOne({ ...filter, status: "accepted" }, update);
+        } catch (error) {
+            if (!duplicateKey(error) || status !== "accepted") throw error;
+            await collections.studentEventParticipations.updateOne(filter, update);
+        }
+        return ok(res, status === "accepted" ? "You agreed to participate in this event." : "Your participation has been withdrawn.", { participation: { event_id: eventId, user_id: student.id, status, agreed_at: status === "accepted" ? now : current?.agreed_at || null, updated_at: now, can_generate_qr: status === "accepted" && /^[A-Za-z0-9-]{3,24}$/.test(student.student_id || "") } });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/admin/event-responses", adminOnly, async (req, res, next) => {
+    const eventId = req.query.event_id ? Number(req.query.event_id) : null;
+    if (eventId !== null && (!Number.isSafeInteger(eventId) || eventId < 1)) return fail(res, 422, "Choose a valid event.");
+    try {
+        const events = await collections.events.find({}, { projection: { id: 1, title: 1, description: 1, location: 1, start_date: 1, end_date: 1, status: 1, publication_status: 1, invited_committees: 1 } }).sort({ start_date: -1 }).limit(500).toArray();
+        if (!eventId) return ok(res, null, { events, responses: [], summary: { pending: 0, accepted: 0, declined: 0 } });
+        const event = events.find((item) => item.id === eventId);
+        if (!event) return fail(res, 404, "Event not found.");
+        const responses = await collections.eventResponses.find({ event_id: eventId }).sort({ status: 1, created_at: 1 }).toArray();
+        const ids = [...new Set(responses.map((response) => response.user_id))];
+        const users = await collections.users.find({ id: { $in: ids } }, { projection: { id: 1, role: 1, first_name: 1, last_name: 1, student_id: 1, email: 1, course: 1, year_level: 1, council_position: 1, council_department: 1, committee_assignment: 1 } }).toArray();
+        const userMap = new Map(users.map((user) => [user.id, user]));
+        const rows = responses.map((response) => ({ ...response, member: userMap.get(response.user_id) || null })).filter((response) => response.member && isEventInvitee(response.member, event));
+        return ok(res, null, { event, events, responses: rows, summary: { pending: rows.filter((row) => row.status === "pending").length, accepted: rows.filter((row) => row.status === "accepted").length, declined: rows.filter((row) => row.status === "declined").length } });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/event-responses/manage", adminOnly, async (req, res, next) => {
+    const eventId = Number(req.body.event_id), userId = Number(req.body.user_id), status = text(req.body.status).trim();
+    if (!Number.isSafeInteger(eventId) || eventId < 1 || !Number.isSafeInteger(userId) || userId < 1 || !["pending", "accepted", "declined"].includes(status)) return fail(res, 422, "Choose a valid participation status.");
+    try {
+        const now = new Date();
+        const event = await collections.events.findOne({ id: eventId });
+        if (!event) return fail(res, 404, "Event not found.");
+        const member = await collections.users.findOne({ id: userId }, { projection: { id: 1, role: 1, council_position: 1, committee_assignment: 1 } });
+        if (!member || !isEventInvitee(member, event)) return fail(res, 403, "This member is not included in the event’s council invitation.");
+        const response = await collections.eventResponses.findOne({ event_id: eventId, user_id: userId });
+        if (!response) return fail(res, 404, "Participation record not found.");
+        const result = await collections.eventResponses.updateOne({ id: response.id, event_id: eventId, user_id: userId }, {
+            $set: { status, updated_at: now, responded_at: status === "pending" ? null : now, response_source: "admin" },
+            $push: { history: { status, changed_at: now, changed_by: Number(req.session.userId), source: "admin" } }
+        });
+        if (!result.modifiedCount) return fail(res, 409, "This participation status changed. Refresh the page and try again.");
+        return ok(res, "Council participation updated.");
+    } catch (error) { return next(error); }
+});
+
+// Retain old event assignment rows without accepting new sign-ups into that legacy workflow.
+app.post("/api/participation/signup", signedIn, (_req, res) => fail(res, 410, "Legacy event assignment sign-ups are no longer used. Use council participation or agree to participate from a student event page."));
 
 app.get("/api/registration/by-code", signedIn, async (req, res, next) => {
     const code = text(req.query.code).trim();
@@ -892,41 +1042,50 @@ app.get("/api/registration/by-code", signedIn, async (req, res, next) => {
     try {
         const registration = await collections.registrations.findOne({ registration_code: code, user_id: Number(req.session.userId) });
         if (!registration) return fail(res, 404, "Registration not found.");
-        const [user, event] = await Promise.all([
+        const [user, event, attendance] = await Promise.all([
             collections.users.findOne({ id: registration.user_id }),
-            collections.events.findOne({ id: registration.event_id })
+            collections.events.findOne({ id: registration.event_id }),
+            collections.attendance.findOne({ registration_id: registration.id }, { sort: { time_in: -1 } })
         ]);
         if (!user || !event) return fail(res, 404, "Registration not found.");
         return ok(res, null, { registration: {
             registration_id: registration.id, registration_code: registration.registration_code,
             status: registration.status, registered_at: registration.registered_at,
-            student_id: user.student_id, first_name: user.first_name, last_name: user.last_name,
-            email: user.email, course: user.course, year_level: user.year_level,
+            attendance: attendance ? { time_in: attendance.time_in, time_out: attendance.time_out || null, currently_present: !attendance.time_out } : null,
+            student_id: registration.participant_snapshot?.student_id || user.student_id, first_name: registration.participant_snapshot?.first_name || user.first_name, last_name: registration.participant_snapshot?.last_name || user.last_name,
+            email: registration.participant_snapshot?.email || user.email, course: registration.participant_snapshot?.course || user.course, year_level: registration.participant_snapshot?.year_level || user.year_level, contact: registration.participant_snapshot?.contact || null,
             event_id: event.id, title: event.title, description: event.description,
             location: event.location, start_date: event.start_date, end_date: event.end_date,
-            cover_image: event.cover_image
+            cover_image: event.cover_image, self_service_checkin: Boolean(event.self_service_checkin), self_service_checkout: Boolean(event.self_service_checkout)
         } });
     } catch (error) { return next(error); }
 });
 
+app.post("/api/registration/pass/reissue", signedIn, (_req, res) => fail(res, 410, "Students agree to participate and generate an attendance QR from the event page. Council members use their reusable identity QR from their profile."));
+
 // Admin event and account management
+app.get("/api/admin/events/event", adminOnly, async (req, res, next) => {
+    const id = Number(req.query.id);
+    if (!Number.isSafeInteger(id) || id < 1) return fail(res, 422, "A valid event ID is required.");
+    try {
+        const event = await collections.events.findOne({ id });
+        if (!event) return fail(res, 404, "Event not found.");
+        return ok(res, null, { event: withEventStatus(event) });
+    } catch (error) { return next(error); }
+});
+
 app.get("/api/admin/events", adminOnly, async (_req, res, next) => {
     try {
-        const [events, eventCount, activeEventCount, registrationCount, studentCount] = await Promise.all([
+        const [events, eventCount, activeEventCount, studentCount] = await Promise.all([
             collections.events.find({}).sort({ start_date: -1 }).toArray(),
             collections.events.countDocuments({}),
             collections.events.countDocuments({ status: { $in: ["upcoming", "ongoing"] }, $or: [{ publication_status: "published" }, { publication_status: { $exists: false } }] }),
-            collections.registrations.countDocuments({ status: { $ne: "cancelled" } }),
             collections.users.countDocuments({ role: "student" })
         ]);
-        const counts = await collections.registrations.aggregate([
-            { $match: { status: { $ne: "cancelled" } } },
-            { $group: { _id: "$event_id", total: { $sum: 1 } } }
-        ]).toArray();
-        const countMap = new Map(counts.map(({ _id, total }) => [_id, total]));
+        const responseCountMap = await countInvitedEventResponses(events);
         return ok(res, null, {
-            events: events.map((event) => ({ ...withEventStatus(event), registration_count: countMap.get(event.id) || 0 })),
-            stats: { event_count: eventCount, active_event_count: activeEventCount, registration_count: registrationCount, student_count: studentCount }
+            events: events.map((event) => ({ ...withEventStatus(event), response_count: responseCountMap.get(event.id)?.total || 0, accepted_response_count: responseCountMap.get(event.id)?.accepted || 0, pending_response_count: responseCountMap.get(event.id)?.pending || 0, declined_response_count: responseCountMap.get(event.id)?.declined || 0 })),
+            stats: { event_count: eventCount, active_event_count: activeEventCount, student_count: studentCount }
         });
     } catch (error) { return next(error); }
 });
@@ -972,8 +1131,63 @@ const periodForDate = (date = new Date()) => {
     const year = Number(parts.year), month = Number(parts.month);
     return month >= 7 ? `${year}-1` : `${year - 1}-2`;
 };
+
+app.get("/api/profile/class-schedule", signedIn, async (req, res, next) => {
+    const period = text(req.query.academic_period).trim() || periodForDate();
+    if (!/^20\d{2}-[12]$/.test(period)) return fail(res, 422, "Choose an academic period in YYYY-1 or YYYY-2 format.");
+    try {
+        const member = await collections.users.findOne({ id: Number(req.session.userId) }, { projection: { id: 1, role: 1, council_position: 1, committee_assignment: 1 } });
+        if (!isAuthorizedCouncilMember(member, councilPositions, councilCommittees)) return fail(res, 403, "A current council appointment or committee assignment is required to manage a class schedule.");
+        const schedule = await collections.councilClassSchedules.findOne({ user_id: member.id, academic_period: period });
+        return ok(res, null, { academic_period: period, slots: schedule?.slots || [], updated_at: schedule?.updated_at || null });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/profile/class-schedule", signedIn, async (req, res, next) => {
+    const period = text(req.body.academic_period).trim() || periodForDate();
+    const sourceSlots = Array.isArray(req.body.slots) ? req.body.slots : null;
+    if (!/^20\d{2}-[12]$/.test(period) || !sourceSlots || sourceSlots.length > 40) return fail(res, 422, "Choose an academic period and enter up to 40 weekly class blocks.");
+    const slots = [];
+    for (const source of sourceSlots) {
+        const day = Number(source.day_of_week);
+        const start = text(source.start_time).trim(), end = text(source.end_time).trim(), label = text(source.label).trim();
+        if (!Number.isInteger(day) || day < 0 || day > 6 || !/^([01]\d|2[0-3]):[0-5]\d$/.test(start) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(end) || end <= start || label.length > 100) return fail(res, 422, "Each class needs a valid day, start time, end time, and short course label.");
+        slots.push({ day_of_week: day, start_time: start, end_time: end, label });
+    }
+    const byDay = new Map();
+    for (const slot of slots) {
+        const daySlots = byDay.get(slot.day_of_week) || [];
+        daySlots.push(slot);
+        byDay.set(slot.day_of_week, daySlots);
+    }
+    for (const daySlots of byDay.values()) {
+        daySlots.sort((a, b) => a.start_time.localeCompare(b.start_time));
+        for (let index = 1; index < daySlots.length; index += 1) {
+            if (daySlots[index].start_time < daySlots[index - 1].end_time) return fail(res, 422, "Class blocks on the same day cannot overlap.");
+        }
+    }
+    try {
+        const member = await collections.users.findOne({ id: Number(req.session.userId) }, { projection: { id: 1, role: 1, council_position: 1, committee_assignment: 1 } });
+        if (!isAuthorizedCouncilMember(member, councilPositions, councilCommittees)) return fail(res, 403, "A current council appointment or committee assignment is required to manage a class schedule.");
+        const now = new Date();
+        await collections.councilClassSchedules.updateOne({ user_id: member.id, academic_period: period }, {
+            $set: { slots, updated_at: now },
+            $setOnInsert: { id: await nextId("council_class_schedules"), user_id: member.id, academic_period: period, created_at: now }
+        }, { upsert: true });
+        return ok(res, "Class schedule saved.", { academic_period: period, slots, updated_at: now });
+    } catch (error) { return next(error); }
+});
+
 const meetingIdFrom = (value) => Number(value);
 const attendancePassHash = (token) => crypto.createHash("sha256").update(token).digest("hex");
+
+async function revokeCouncilAttendanceCredential(userId, operatorUserId) {
+    const credential = await collections.councilMemberCredentials.findOne({ user_id: Number(userId), revoked_at: { $exists: false } });
+    if (!credential) return;
+    const now = new Date();
+    await collections.councilMemberCredentials.updateOne({ user_id: Number(userId), pass_id: credential.pass_id }, { $set: { revoked_at: now, revoked_by: Number(operatorUserId) }, $unset: { pass_id: "" } });
+    await collections.attendanceAudit.insertOne({ id: await nextId("attendance_audit"), action: "council_credential_revoked", participant_type: "council", user_id: Number(userId), operator_user_id: Number(operatorUserId), created_at: now });
+}
 
 app.post("/api/admin/council/roster", adminOnly, async (req, res, next) => {
     const userId = Number(req.body.user_id);
@@ -982,7 +1196,7 @@ app.post("/api/admin/council/roster", adminOnly, async (req, res, next) => {
     if (!Number.isInteger(userId) || userId < 1 || (position && !councilPositions.has(position))) return fail(res, 422, "Choose a valid account and council appointment.");
     if (position === "department_representative" && !councilDepartments.has(department)) return fail(res, 422, "Choose the represented department.");
     try {
-        const user = await collections.users.findOne({ id: userId }, { projection: { id: 1 } });
+        const user = await collections.users.findOne({ id: userId }, { projection: { id: 1, role: 1, council_position: 1, committee_assignment: 1 } });
         if (!user) return fail(res, 404, "Council account not found.");
         if (position && !["advisor", "co_advisor"].includes(position)) {
             const assignmentQuery = position === "department_representative"
@@ -998,6 +1212,8 @@ app.post("/api/admin/council/roster", adminOnly, async (req, res, next) => {
             if (position !== "department_representative") update.$unset = { council_department: "" };
             await collections.users.updateOne({ id: userId }, update);
         }
+        const updatedMember = { ...user, council_position: position || undefined, council_department: position === "department_representative" ? department : undefined };
+        if (!isAuthorizedCouncilMember(updatedMember, councilPositions, councilCommittees)) await revokeCouncilAttendanceCredential(userId, req.session.userId);
         return ok(res, position ? "Council appointment saved." : "Council appointment removed.");
     } catch (error) { return next(error); }
 });
@@ -1027,6 +1243,8 @@ app.post("/api/admin/council/committee-assignment", adminOnly, async (req, res, 
                 committee_assigned_by: ""
             } });
         }
+        const updatedMember = { ...user, committee_assignment: committee || undefined };
+        if (!isAuthorizedCouncilMember(updatedMember, councilPositions, councilCommittees)) await revokeCouncilAttendanceCredential(userId, req.session.userId);
         return ok(res, committee ? "Committee workspace access saved." : "Committee workspace access removed.", {
             committee_assignment: committee || null,
             effective_committee_assignment: user.role === "admin" || executiveCouncilPositions.has(user.council_position)
@@ -1280,6 +1498,57 @@ app.post("/api/council/attendance/pass", votingCouncilMember, async (req, res, n
     } catch (error) { return next(error); }
 });
 
+async function getAuthorizedCouncilCredentialUser(userId) {
+    const user = await collections.users.findOne({ id: Number(userId) }, {
+        projection: { id: 1, role: 1, first_name: 1, last_name: 1, student_id: 1, email: 1, course: 1, year_level: 1, council_position: 1, council_department: 1, committee_assignment: 1 }
+    });
+    return isAuthorizedCouncilMember(user, councilPositions, councilCommittees) ? user : null;
+}
+
+app.get("/api/council/attendance/credential", signedIn, async (req, res, next) => {
+    try {
+        const member = await getAuthorizedCouncilCredentialUser(req.session.userId);
+        if (!member) return fail(res, 403, "A current council appointment or committee assignment is required for a member QR.");
+        return ok(res, null, { credential: { qr_value: identityQr(member.student_id), issued_at: null, reissued_at: null }, member: { name: `${member.first_name} ${member.last_name}`, position: member.council_position || null, committee: member.committee_assignment || null } });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/council/attendance/credential/issue", signedIn, async (req, res, next) => {
+    try {
+        const member = await getAuthorizedCouncilCredentialUser(req.session.userId);
+        if (!member) return fail(res, 403, "A current council appointment or committee assignment is required for a member QR.");
+        return ok(res, "Your reusable council identity QR is ready.", { qr_value: identityQr(member.student_id) });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/council/attendance/credential/reissue", signedIn, async (req, res, next) => {
+    try {
+        const member = await getAuthorizedCouncilCredentialUser(req.session.userId);
+        if (!member) return fail(res, 403, "A current council appointment or committee assignment is required for a member QR.");
+        return ok(res, "Your reusable council QR contains your account ID and no event or attendance state.", { qr_value: identityQr(member.student_id) });
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/council/attendance/mine", signedIn, async (req, res, next) => {
+    try {
+        const member = await getAuthorizedCouncilCredentialUser(req.session.userId);
+        if (!member) return fail(res, 403, "A current council appointment or committee assignment is required.");
+        const [records, events] = await Promise.all([
+            collections.attendance.find({ participant_type: "council", user_id: member.id }).sort({ time_in: -1 }).limit(500).toArray(),
+            collections.events.find({ status: { $in: ["upcoming", "ongoing"] }, $or: [{ publication_status: "published" }, { publication_status: { $exists: false } }] }).sort({ start_date: 1 }).limit(200).toArray()
+        ]);
+        const recordMap = new Map(records.map((record) => [record.event_id, record]));
+        const eventMap = new Map(events.map((event) => [event.id, event]));
+        const historyEvents = await collections.events.find({ id: { $in: records.map((record) => record.event_id).filter(Number.isInteger) } }, { projection: { id: 1, title: 1, location: 1, start_date: 1, end_date: 1, status: 1, publication_status: 1, self_service_checkin: 1, self_service_checkout: 1 } }).toArray();
+        historyEvents.forEach((event) => eventMap.set(event.id, event));
+        const visibleEvents = [...eventMap.values()].filter((event) => recordMap.has(event.id) || event.self_service_checkin || event.self_service_checkout).sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+        return ok(res, null, { events: visibleEvents.map((event) => {
+            const record = recordMap.get(event.id);
+            return { id: event.id, title: event.title, location: event.location, start_date: event.start_date, end_date: event.end_date, self_service_checkin: Boolean(event.self_service_checkin), self_service_checkout: Boolean(event.self_service_checkout), attendance: record ? { time_in: record.time_in, time_out: record.time_out || null, currently_present: !record.time_out } : null };
+        }) });
+    } catch (error) { return next(error); }
+});
+
 app.post("/api/council/attendance/checkin", councilAccess(["governor", "vice_governor", "secretary"]), async (req, res, next) => {
     const qrValue = text(req.body.qr_value).trim();
     const token = qrValue.startsWith("AUSSC-MEETING:") ? qrValue.slice("AUSSC-MEETING:".length) : "";
@@ -1314,21 +1583,118 @@ const workStatuses = new Set(["Request Submitted", "Requirements Review", "Assig
 const workCommittees = new Set(["executive", "publication", "production", "program"]);
 
 
-const publicationSubmissionUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024, files: 1 } });
+const publicationSubmissionUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024, files: 1, fields: 4, parts: 5, fieldSize: 8 * 1024 } });
 const publicationSubmissionMiddleware = (req, res, next) => publicationSubmissionUpload.single("attachment")(req, res, (error) => {
     if (error) return fail(res, 422, "Attachments must be smaller than 4 MB.");
     next();
 });
 const publicationFileTypes = new Set(["image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm", "video/quicktime"]);
 
-async function createNotification(userId, { kind, title, message, taskId = null, dedupeKey }) {
+async function createNotification(userId, { kind, title, message, taskId = null, eventId = null, href = null, dedupeKey }) {
     if (!Number.isInteger(Number(userId)) || !dedupeKey) return;
     const id = await nextId("notifications");
     await collections.notifications.updateOne(
         { user_id: Number(userId), dedupe_key: dedupeKey },
-        { $setOnInsert: { id, user_id: Number(userId), kind, title, message, task_id: taskId, href: taskId ? `/admin/committees/publication?task=${taskId}` : null, dedupe_key: dedupeKey, created_at: new Date(), read_at: null } },
+        { $setOnInsert: { id, user_id: Number(userId), kind, title, message, task_id: taskId, event_id: eventId, href: href || (taskId ? `/admin/committees/publication?task=${taskId}` : eventId ? `/events/${eventId}` : null), dedupe_key: dedupeKey, created_at: new Date(), read_at: null } },
         { upsert: true }
     );
+}
+
+function eventInviteCommittees(event) {
+    const value = event?.invited_committees;
+    const configured = Array.isArray(value) ? value : value == null ? ["all"] : text(value).split(",");
+    const selected = [...new Set(configured.map((value) => text(value).trim().toLowerCase()).filter((value) => value === "all" || councilCommittees.has(value)))];
+    return selected.includes("all") ? ["all"] : selected;
+}
+
+function isEventInvitee(member, event) {
+    if (!isAuthorizedCouncilMember(member, councilPositions, councilCommittees) || !event) return false;
+    const invitedCommittees = eventInviteCommittees(event);
+    if (invitedCommittees.includes("all")) return true;
+    const memberCommittees = new Set();
+    if (member.role === "admin" || member.committee_assignment === "executive" || executiveCouncilPositions.has(member.council_position)) memberCommittees.add("executive");
+    if (councilCommittees.has(member.committee_assignment)) memberCommittees.add(member.committee_assignment);
+    return invitedCommittees.some((committee) => memberCommittees.has(committee));
+}
+
+function isCouncilParticipationOpen(event, now = new Date()) {
+    const end = event?.end_date ? new Date(event.end_date) : null;
+    return Boolean(event && event.participation_open !== false && end && !Number.isNaN(end.getTime()) && end >= now &&
+        !["cancelled", "completed", "archived"].includes(event.status) && !["cancelled", "archived"].includes(event.publication_status));
+}
+
+async function listEventResponseMembers(event) {
+    const members = await collections.users.find({ $or: [
+        { role: "admin" },
+        { council_position: { $in: [...councilPositions] } },
+        { committee_assignment: { $in: [...councilCommittees] } }
+    ] }, { projection: { id: 1, role: 1, first_name: 1, last_name: 1, student_id: 1, email: 1, course: 1, council_position: 1, council_department: 1, committee_assignment: 1 } }).toArray();
+    return members.filter((member) => isEventInvitee(member, event));
+}
+
+async function countInvitedEventResponses(events) {
+    if (!events.length) return new Map();
+    const eventIds = events.map((event) => event.id);
+    const eventMap = new Map(events.map((event) => [event.id, event]));
+    const responses = await collections.eventResponses.find({ event_id: { $in: eventIds } }, { projection: { event_id: 1, user_id: 1, status: 1 } }).toArray();
+    const userIds = [...new Set(responses.map((response) => response.user_id))];
+    const users = userIds.length ? await collections.users.find({ id: { $in: userIds } }, { projection: { id: 1, role: 1, council_position: 1, committee_assignment: 1 } }).toArray() : [];
+    const userMap = new Map(users.map((user) => [user.id, user]));
+    const counts = new Map();
+    for (const event of events) counts.set(event.id, { total: 0, accepted: 0, pending: 0, declined: 0 });
+    for (const response of responses) {
+        const event = eventMap.get(response.event_id), member = userMap.get(response.user_id);
+        if (!isEventInvitee(member, event)) continue;
+        const count = counts.get(response.event_id);
+        count.total += 1;
+        if (Object.hasOwn(count, response.status)) count[response.status] += 1;
+    }
+    return counts;
+}
+
+async function seedEventResponseRoster(eventId, members, now = new Date()) {
+    if (!members.length) return;
+    const operations = await Promise.all(members.map(async (member) => ({
+        updateOne: {
+            filter: { event_id: Number(eventId), user_id: Number(member.id) },
+            update: { $setOnInsert: { id: await nextId("event_responses"), event_id: Number(eventId), user_id: Number(member.id), status: "pending", created_at: now, responded_at: null, history: [] } },
+            upsert: true
+        }
+    })));
+    await collections.eventResponses.bulkWrite(operations, { ordered: false });
+}
+
+function eventNoticeMessage(event, reason) {
+    const start = new Date(event.start_date).toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "short" });
+    const end = new Date(event.end_date).toLocaleTimeString("en-PH", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit" });
+    const description = text(event.description).trim();
+    const instruction = reason === "New council event"
+        ? "Open the event to accept or decline council participation."
+        : reason === "Event cancelled"
+            ? "This event has been cancelled. Review the event page for details."
+            : "Review the updated details and revise your participation response if needed.";
+    return `${reason}\n${event.title}\nWhen: ${start}–${end} (Philippine time)\nWhere: ${event.location}\n${description.slice(0, 500)}${description.length > 500 ? "…" : ""}\n${instruction}`.slice(0, 950);
+}
+
+function eventNoticeStatus(result) {
+    if (result.failed_count) return "failed";
+    return result.recipient_count ? "sent" : "no_recipients";
+}
+
+async function notifyEventResponseMembers(event, reason, dedupeKey) {
+    const members = await listEventResponseMembers(event);
+    await seedEventResponseRoster(event.id, members);
+    let pending = members;
+    for (let attempt = 0; attempt < 2 && pending.length; attempt += 1) {
+        const results = await Promise.allSettled(pending.map((member) => createNotification(member.id, {
+            kind: reason === "New council event" ? "event_invitation" : reason === "Event cancelled" ? "event_cancelled" : "event_updated",
+            title: reason === "New council event" ? `Council event: ${event.title}` : reason === "Event cancelled" ? `Event cancelled: ${event.title}` : `Event details updated: ${event.title}`,
+            message: eventNoticeMessage(event, reason), eventId: event.id, href: `/events/${event.id}`,
+            dedupeKey: `${dedupeKey}:${member.id}`
+        })));
+        pending = pending.filter((_member, index) => results[index].status === "rejected");
+    }
+    return { recipient_count: members.length, delivered_count: members.length - pending.length, failed_count: pending.length };
 }
 
 async function notifyPublicationExecutives(kind, title, message, taskId, dedupeKey) {
@@ -1384,6 +1750,37 @@ function revisionFilter(item) {
 function publicationTaskId(value) {
     const id = Number(value);
     return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+function classScheduleOverlaps(slots, startValue, endValue) {
+    const start = new Date(startValue), end = new Date(endValue);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return false;
+    const partsFor = (date) => Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+    }).formatToParts(date).map((part) => [part.type, part.value]));
+    const startParts = partsFor(start), endParts = partsFor(end);
+    const startKey = `${startParts.year}-${startParts.month}-${startParts.day}`;
+    const endKey = `${endParts.year}-${endParts.month}-${endParts.day}`;
+    const dateKeyUtc = (key) => Date.parse(`${key}T00:00:00Z`);
+    const startDay = dateKeyUtc(startKey), endDay = dateKeyUtc(endKey);
+    const startMinute = Number(startParts.hour) * 60 + Number(startParts.minute);
+    const endMinute = Number(endParts.hour) * 60 + Number(endParts.minute);
+    for (let day = startDay; day <= endDay; day += 24 * 60 * 60 * 1000) {
+        const date = new Date(day);
+        const key = date.toISOString().slice(0, 10);
+        const lower = key === startKey ? startMinute : 0;
+        const upper = key === endKey ? endMinute : 1440;
+        if (upper <= lower) continue;
+        const weekday = date.getUTCDay();
+        for (const slot of slots || []) {
+            if (Number(slot.day_of_week) !== weekday) continue;
+            const [startHour, startMinutes] = text(slot.start_time).split(":").map(Number);
+            const [endHour, endMinutes] = text(slot.end_time).split(":").map(Number);
+            const classStart = startHour * 60 + startMinutes, classEnd = endHour * 60 + endMinutes;
+            if (classStart < upper && classEnd > lower) return true;
+        }
+    }
+    return false;
 }
 
 async function storePublicationAttachment(file, taskId, userId, version) {
@@ -1654,21 +2051,18 @@ app.get("/api/admin/dashboard", adminOnly, async (_req, res, next) => {
     try {
         const now = new Date();
         const period = periodForDate(now);
-        const manilaMonth = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit" }).formatToParts(now).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
-        const trendStart = new Date(Date.UTC(Number(manilaMonth.year), Number(manilaMonth.month) - 6, 1) - 8 * 60 * 60 * 1000);
         const [
             studentCount,
             studentCourseRows,
-            studentRegistrationRows,
+            studentAttendanceCount,
             totalEventCount,
             activeEventCount,
             publicationRows,
             eventRows,
-            eventRegistrationRows,
+            eventAudienceRows,
             councilMetricsRows,
             meetings,
             reports,
-            pendingAssignmentCount,
             pendingApprovalWorkCount,
             financeRows
         ] = await Promise.all([
@@ -1679,24 +2073,12 @@ app.get("/api/admin/dashboard", adminOnly, async (_req, res, next) => {
                 { $sort: { count: -1, _id: 1 } },
                 { $limit: 6 }
             ]).toArray(),
-            collections.registrations.aggregate([
-                { $lookup: { from: "users", localField: "user_id", foreignField: "id", as: "account" } },
-                { $unwind: "$account" },
-                { $match: { "account.role": "student", status: { $ne: "cancelled" } } },
-                { $facet: {
-                    summary: [{ $group: { _id: null, registrations: { $sum: 1 }, checked_in: { $sum: { $cond: [{ $eq: ["$status", "attended"] }, 1, 0] } } } }],
-                    trend: [
-                        { $match: { registered_at: { $gte: trendStart } } },
-                        { $group: { _id: { $dateToString: { format: "%Y-%m", date: "$registered_at", timezone: "Asia/Manila" } }, registrations: { $sum: 1 }, checked_in: { $sum: { $cond: [{ $eq: ["$status", "attended"] }, 1, 0] } } } },
-                        { $sort: { _id: 1 } }
-                    ]
-                } }
-            ]).toArray(),
+            collections.attendance.countDocuments({ participant_type: { $ne: "council" } }),
             collections.events.countDocuments({}),
             collections.events.countDocuments({ status: { $in: ["upcoming", "ongoing"] }, $or: [{ publication_status: "published" }, { publication_status: { $exists: false } }] }),
             collections.events.aggregate([{ $group: { _id: { $ifNull: ["$publication_status", "published"] }, count: { $sum: 1 } } }]).toArray(),
             collections.events.find({ status: { $in: ["upcoming", "ongoing"] }, $or: [{ publication_status: "published" }, { publication_status: { $exists: false } }] }, { projection: { id: 1, title: 1, start_date: 1, end_date: 1, location: 1, cover_image: 1, capacity: 1, status: 1, publication_status: 1 } }).sort({ start_date: 1 }).limit(4).toArray(),
-            collections.registrations.aggregate([{ $match: { status: { $ne: "cancelled" } } }, { $group: { _id: "$event_id", count: { $sum: 1 } } }]).toArray(),
+            collections.events.find({}, { projection: { id: 1, invited_committees: 1 } }).toArray(),
             collections.users.aggregate([{ $facet: {
                 roster: [{ $match: { council_position: { $in: [...councilPositions] } } }, { $count: "count" }],
                 voting: [{ $match: { council_position: { $in: votingCouncilPositions } } }, { $count: "count" }],
@@ -1705,17 +2087,13 @@ app.get("/api/admin/dashboard", adminOnly, async (_req, res, next) => {
             } }]).toArray(),
             collections.governanceMeetings.find({ academic_period: period }, { projection: { id: 1, title: 1, meeting_type: 1, mandatory: 1, status: 1, start_at: 1, end_at: 1, quorum_waiver_rationale: 1, minutes_status: 1 } }).sort({ start_at: 1 }).toArray(),
             collections.councilReports.find({ academic_period: period }, { projection: { committee: 1, status: 1 } }).toArray(),
-            collections.eventAssignments.countDocuments({ status: "pending" }),
             collections.committeeWorkItems.countDocuments({ committee: "executive", kind: "approval", status: { $nin: ["Approved", "Complete", "Archived"] } }),
             collections.financialRecords.find({ $or: [{ type: "allocation", status: { $in: ["proposed", "approved"] } }, { type: "expense", status: { $in: ["pending", "recorded"] } }] }, { projection: { type: 1, status: 1, amount: 1 } }).toArray()
         ]);
 
-        const studentRegistrationStats = studentRegistrationRows[0] || { summary: [], trend: [] };
-        const studentSummary = studentRegistrationStats.summary[0] || { registrations: 0, checked_in: 0 };
-        const studentRegistrations = Number(studentSummary.registrations || 0);
-        const studentCheckIns = Number(studentSummary.checked_in || 0);
         const publication = Object.fromEntries(publicationRows.map(({ _id, count }) => [_id, count]));
-        const eventRegistrationCount = new Map(eventRegistrationRows.map(({ _id, count }) => [_id, count]));
+        const eventResponseCount = await countInvitedEventResponses(eventAudienceRows);
+        const pendingResponseCount = [...eventResponseCount.values()].reduce((sum, counts) => sum + counts.pending, 0);
         const councilMetrics = councilMetricsRows[0] || {};
         const votingMemberCount = councilMetrics.voting?.[0]?.count || 0;
         const quorumThreshold = votingMemberCount ? Math.ceil(votingMemberCount * 2 / 3) : 0;
@@ -1767,18 +2145,15 @@ app.get("/api/admin/dashboard", adminOnly, async (_req, res, next) => {
         const reportsPending = Number(reportStatusCount.submitted || 0);
         const minutesPending = meetings.filter((meeting) => meeting.minutes_status === "pending_advisor").length;
         const pendingExcuseReviews = currentPeriodExcuses.filter((excuse) => excuse.status === "pending").length;
-        const pendingApprovals = publicationPending + reportsPending + minutesPending + pendingExcuseReviews + pendingAssignmentCount + pendingApprovalWorkCount;
+        const pendingApprovals = publicationPending + reportsPending + minutesPending + pendingExcuseReviews + pendingApprovalWorkCount;
 
         return ok(res, null, {
             dashboard: {
                 academic_period: period,
                 students: {
                     account_count: studentCount,
-                    registration_count: studentRegistrations,
-                    check_in_count: studentCheckIns,
-                    check_in_rate: studentRegistrations ? Math.round(studentCheckIns / studentRegistrations * 100) : 0,
-                    course_distribution: studentCourseRows.map((row) => ({ course: row._id, count: row.count })),
-                    registration_trend: studentRegistrationStats.trend.map((month) => ({ month: month._id, registrations: month.registrations, checked_in: month.checked_in }))
+                    attendance_session_count: studentAttendanceCount,
+                    course_distribution: studentCourseRows.map((row) => ({ course: row._id, count: row.count }))
                 },
                 events: {
                     total: totalEventCount,
@@ -1805,12 +2180,12 @@ app.get("/api/admin/dashboard", adminOnly, async (_req, res, next) => {
                     reports_by_committee: reportStatusCount.by_committee,
                     minutes_pending_review: minutesPending,
                     excuses_pending_review: pendingExcuseReviews,
-                    event_assignments_pending: pendingAssignmentCount,
+                    event_responses_pending: pendingResponseCount,
                     approval_queue_count: pendingApprovals,
                     finance: { ...finance, available_balance: finance.approved_allocations - finance.recorded_expenses }
                 }
             },
-            events: eventRows.map((event) => ({ ...withEventStatus(event), registration_count: eventRegistrationCount.get(event.id) || 0 }))
+            events: eventRows.map((event) => ({ ...withEventStatus(event), response_count: eventResponseCount.get(event.id)?.total || 0, accepted_response_count: eventResponseCount.get(event.id)?.accepted || 0, pending_response_count: eventResponseCount.get(event.id)?.pending || 0, declined_response_count: eventResponseCount.get(event.id)?.declined || 0 }))
         });
     } catch (error) { return next(error); }
 });
@@ -1829,38 +2204,48 @@ app.get("/api/admin/committee-work", committeeWorkspaceAccess, async (req, res, 
         const usersQuery = isExecutive
             ? { $or: [
                 { committee_assignment: committee || "executive" },
+                { committee_assignment: { $in: [...councilCommittees] } },
                 { committee_assignment: "executive" },
                 { role: "admin" },
-                { council_position: { $in: [...executiveCouncilPositions] } }
+                { council_position: { $in: [...councilPositions] } }
             ] }
             : req.workspaceCommittee === "publication" ? { id: Number(req.session.userId) } : { committee_assignment: req.workspaceCommittee };
-        const [items, events, users, eventCount, activeEventCount, registrationCount, attendanceCount, workApprovalCount, assignmentQueue, pendingEvents, financeRecords] = await Promise.all([
+        const [items, events, users, eventCount, activeEventCount, attendanceCount, workApprovalCount, pendingEvents, financeRecords, eventAudienceRows] = await Promise.all([
             collections.committeeWorkItems.find(query, { projection: itemProjection }).sort({ due_at: 1, updated_at: -1 }).toArray(),
-            collections.events.find(visibleEventsQuery, { projection: { id: 1, title: 1, start_date: 1, status: 1 } }).sort({ start_date: -1 }).toArray(),
-            collections.users.find(usersQuery, { projection: { id: 1, first_name: 1, last_name: 1, email: 1, role: 1 } }).sort({ first_name: 1 }).toArray(),
+            collections.events.find(visibleEventsQuery, { projection: { id: 1, title: 1, start_date: 1, end_date: 1, status: 1 } }).sort({ start_date: -1 }).toArray(),
+            collections.users.find(usersQuery, { projection: { id: 1, first_name: 1, last_name: 1, email: 1, role: 1, council_position: 1, committee_assignment: 1 } }).sort({ first_name: 1 }).toArray(),
             isExecutive ? collections.events.countDocuments({}) : Promise.resolve(0),
             isExecutive ? collections.events.countDocuments({ status: { $in: ["upcoming", "ongoing"] } }) : Promise.resolve(0),
-            isExecutive ? collections.registrations.countDocuments({ status: { $ne: "cancelled" } }) : Promise.resolve(0),
             isExecutive ? collections.attendance.countDocuments({}) : Promise.resolve(0),
             isExecutive ? collections.committeeWorkItems.countDocuments({ committee: "executive", kind: "approval", status: { $nin: ["Approved", "Complete", "Archived"] } }) : Promise.resolve(0),
-            isExecutive && committee === "executive" ? collections.eventAssignments.find({ status: "pending" }).sort({ created_at: 1 }).toArray() : Promise.resolve([]),
             isExecutive && committee === "executive" ? collections.events.find({ publication_status: "pending_approval" }, { projection: { id: 1, title: 1, description: 1, start_date: 1, end_date: 1, location: 1, cover_image: 1 } }).sort({ start_date: 1 }).toArray() : Promise.resolve([]),
-            isExecutive && committee === "executive" ? collections.financialRecords.find({ $or: [{ type: "allocation", status: "approved" }, { type: "expense", status: "recorded" }] }, { projection: { type: 1, amount: 1 } }).toArray() : Promise.resolve([])
+            isExecutive && committee === "executive" ? collections.financialRecords.find({ $or: [{ type: "allocation", status: "approved" }, { type: "expense", status: "recorded" }] }, { projection: { type: 1, amount: 1 } }).toArray() : Promise.resolve([]),
+            isExecutive ? collections.events.find({}, { projection: { id: 1, invited_committees: 1 } }).toArray() : Promise.resolve([])
         ]);
+        const eventResponseCounts = isExecutive ? await countInvitedEventResponses(eventAudienceRows) : new Map();
+        const pendingResponseCount = [...eventResponseCounts.values()].reduce((sum, counts) => sum + counts.pending, 0);
         const eventMap = new Map(events.map((event) => [event.id, event.title]));
         const userMap = new Map(users.map((user) => [user.id, `${user.first_name} ${user.last_name}`.trim()]));
         const financeSummary = financeRecords.reduce((summary, item) => { if (item.type === "allocation") summary.allocated += Number(item.amount); if (item.type === "expense") summary.expenses += Number(item.amount); return summary; }, { allocated: 0, expenses: 0 });
-        let assignmentQueueRows = [];
-        if (assignmentQueue.length) {
-            const [allEvents, assignmentUsers] = await Promise.all([
-                collections.events.find({ id: { $in: [...new Set(assignmentQueue.map((item) => item.event_id))] } }, { projection: { id: 1, title: 1, start_date: 1 } }).toArray(),
-                collections.users.find({ id: { $in: [...new Set(assignmentQueue.map((item) => item.user_id))] } }, { projection: { id: 1, first_name: 1, last_name: 1, student_id: 1, email: 1 } }).toArray()
-            ]);
-            const assignmentEventMap = new Map(allEvents.map((item) => [item.id, item]));
-            const assignmentUserMap = new Map(assignmentUsers.map((item) => [item.id, item]));
-            assignmentQueueRows = assignmentQueue.map((item) => ({ ...item, event: assignmentEventMap.get(item.event_id), member: assignmentUserMap.get(item.user_id) })).filter((item) => item.event && item.member);
+        const eventIds = events.map((event) => event.id);
+        const [eventResponses, schedules] = await Promise.all([
+            eventIds.length && users.length ? collections.eventResponses.find({ event_id: { $in: eventIds }, user_id: { $in: users.map((user) => user.id) } }, { projection: { event_id: 1, user_id: 1, status: 1 } }).toArray() : Promise.resolve([]),
+            users.length ? collections.councilClassSchedules.find({ user_id: { $in: users.map((user) => user.id) } }, { projection: { user_id: 1, academic_period: 1, slots: 1 } }).toArray() : Promise.resolve([])
+        ]);
+        const responseByPair = new Map(eventResponses.map((response) => [`${response.event_id}:${response.user_id}`, response]));
+        const scheduleMap = new Map(schedules.map((schedule) => [`${schedule.academic_period}:${schedule.user_id}`, schedule.slots || []]));
+        const availability = [];
+        for (const event of events) {
+            const schedulePeriod = periodForDate(new Date(event.start_date));
+            for (const user of users) {
+                if (!isEventInvitee(user, event)) continue;
+                const response = responseByPair.get(`${event.id}:${user.id}`);
+                if (!response) continue;
+                const slots = scheduleMap.get(`${schedulePeriod}:${user.id}`);
+                availability.push({ event_id: event.id, user_id: user.id, response_status: response?.status || "pending", has_schedule: Array.isArray(slots), class_conflict: Array.isArray(slots) && classScheduleOverlaps(slots, event.start_date, event.end_date) });
+            }
         }
-        return ok(res, null, { items: items.map((item) => ({ ...item, event_title: eventMap.get(item.event_id) || "—", assignee_name: userMap.get(item.assignee_user_id) || "Unassigned" })), events, users, assignment_queue: assignmentQueueRows, event_queue: pendingEvents, overview: isExecutive ? { event_count: eventCount, active_event_count: activeEventCount, registration_count: registrationCount, attendance_count: attendanceCount, pending_approval_count: workApprovalCount + assignmentQueueRows.length + pendingEvents.length, approved_allocation_total: financeSummary.allocated, recorded_expense_total: financeSummary.expenses } : null });
+        return ok(res, null, { items: items.map((item) => ({ ...item, event_title: eventMap.get(item.event_id) || "—", assignee_name: userMap.get(item.assignee_user_id) || "Unassigned" })), events, users, availability, event_queue: pendingEvents, overview: isExecutive ? { event_count: eventCount, active_event_count: activeEventCount, attendance_count: attendanceCount, pending_response_count: pendingResponseCount, pending_approval_count: workApprovalCount + pendingEvents.length, approved_allocation_total: financeSummary.allocated, recorded_expense_total: financeSummary.expenses } : null });
     } catch (error) { return next(error); }
 });
 
@@ -1902,19 +2287,42 @@ app.post("/api/admin/committee-work/save", committeeWorkspaceAccess, async (req,
     if (attachmentUrl && (!/^https?:\/\//i.test(attachmentUrl) || attachmentUrl.length > 1000)) return fail(res, 422, "Attachments must use a valid HTTPS or HTTP URL.");
     try {
         const now = new Date();
-        if (eventId && !await collections.events.findOne({ id: eventId }, { projection: { id: 1 } })) return fail(res, 404, "Event not found.");
+        const linkedEvent = eventId ? await collections.events.findOne({ id: eventId }) : null;
+        if (eventId && !linkedEvent) return fail(res, 404, "Event not found.");
+        const existingWorkItem = id ? await collections.committeeWorkItems.findOne({ id }, { projection: { id: 1, committee: 1, kind: 1, event_id: 1, assignee_user_id: 1 } }) : null;
+        if (id && !existingWorkItem) return fail(res, 404, "Work item not found.");
+        if (existingWorkItem && (existingWorkItem.committee !== committee || existingWorkItem.kind !== kind)) return fail(res, 422, "A work item cannot be moved between committee workflows or types after creation.");
+        const isExistingAssignee = Boolean(existingWorkItem && existingWorkItem.assignee_user_id === assigneeId && (existingWorkItem.event_id || null) === eventId);
+        if (eventId && assigneeId && !isExistingAssignee) {
+            if (!isEventInvitee(await collections.users.findOne({ id: assigneeId }, { projection: { id: 1, role: 1, council_position: 1, committee_assignment: 1 } }), linkedEvent)) {
+                return fail(res, 422, "Choose a council member invited to this event.");
+            }
+            if (!await collections.eventResponses.findOne({ event_id: eventId, user_id: assigneeId, status: "accepted" }, { projection: { id: 1 } })) {
+                return fail(res, 422, "Choose an invited council member who accepted this event before assigning them event work.");
+            }
+            const schedule = await collections.councilClassSchedules.findOne({ user_id: assigneeId, academic_period: periodForDate(new Date(linkedEvent.start_date)) }, { projection: { slots: 1 } });
+            const hasConflict = Boolean(schedule && classScheduleOverlaps(schedule.slots || [], linkedEvent.start_date, linkedEvent.end_date));
+            if (hasConflict && req.body.confirm_class_conflict !== true && req.body.confirm_class_conflict !== "true") {
+                return fail(res, 409, "This member has a class during the event. Confirm that you have checked their availability before assigning the work.");
+            }
+        }
         if (assigneeId) {
-            const assigneeQuery = committee === "publication" && kind === "pubmat"
+            const assigneeQuery = isExistingAssignee ? null : committee === "publication" && kind === "pubmat"
                 ? { id: assigneeId, committee_assignment: "publication" }
                 : req.workspaceCommittee
                     ? { id: assigneeId, committee_assignment: req.workspaceCommittee }
-                    : { id: assigneeId, $or: [
-                        { committee_assignment: committee },
-                        { committee_assignment: "executive" },
-                        { role: "admin" },
-                        { council_position: { $in: [...executiveCouncilPositions] } }
-                    ] };
-            if (!await collections.users.findOne(assigneeQuery, { projection: { id: 1 } })) {
+                    : eventId
+                        ? { id: assigneeId, $or: [
+                            { committee_assignment: { $in: [...councilCommittees] } },
+                            { council_position: { $in: [...councilPositions] } }
+                        ] }
+                        : { id: assigneeId, $or: [
+                            { committee_assignment: committee },
+                            { committee_assignment: "executive" },
+                            { role: "admin" },
+                            { council_position: { $in: [...executiveCouncilPositions] } }
+                        ] };
+            if (assigneeQuery && !await collections.users.findOne(assigneeQuery, { projection: { id: 1 } })) {
                 return fail(res, 422, req.workspaceCommittee ? "You can assign work only to members of your committee." : "Assignee must belong to this committee or the Executive Committee.");
             }
         }
@@ -2020,19 +2428,7 @@ app.post("/api/admin/committee-work/checklist", committeeWorkspaceAccess, async 
     } catch (error) { return next(error); }
 });
 
-app.post("/api/admin/participation/review", adminOnly, async (req, res, next) => {
-    const id = Number(req.body.id);
-    const status = text(req.body.status).trim();
-    if (!Number.isInteger(id) || id < 1 || !["approved", "rejected"].includes(status)) return fail(res, 422, "Choose a valid assignment decision.");
-    try {
-        const assignment = await collections.eventAssignments.findOne({ id, status: "pending" });
-        if (!assignment) return fail(res, 404, "The pending event assignment could not be found.");
-        const result = await collections.eventAssignments.updateOne({ id, status: "pending" }, { $set: { status, reviewed_by: Number(req.session.userId), reviewed_at: new Date() } });
-        if (!result.modifiedCount) return fail(res, 409, "This assignment was already reviewed.");
-        if (status === "rejected") await collections.events.updateOne({ id: assignment.event_id, assignment_capacity: { $gt: 0 }, assignment_count: { $gt: 0 } }, { $inc: { assignment_count: -1 } });
-        return ok(res, status === "approved" ? "Assignment approved." : "Assignment declined.");
-    } catch (error) { return next(error); }
-});
+app.post("/api/admin/participation/review", adminOnly, (_req, res) => fail(res, 410, "Legacy event assignment requests are read-only. Manage council participation from the Participation page."));
 
 // Finance records remain private until an authorized administrator approves publication.
 app.get("/api/transparency/reports", async (_req, res, next) => {
@@ -2083,13 +2479,13 @@ app.post("/api/admin/finance/save", adminOnly, async (req, res, next) => {
     } catch (error) { return next(error); }
 });
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024, files: 1 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024, files: 1, fields: 30, parts: 31, fieldSize: 32 * 1024 } });
 const imageMiddleware = (req, res, next) => upload.single("cover_image")(req, res, (error) => {
     if (error) return fail(res, 422, "Choose an image smaller than 4 MB.");
     next();
 });
 
-const profileUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 2 } });
+const profileUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 2, fields: 12, parts: 14, fieldSize: 8 * 1024 } });
 const profileImageMiddleware = (req, res, next) => profileUpload.fields([
     { name: "profile_picture", maxCount: 1 },
     { name: "cover_photo", maxCount: 1 }
@@ -2225,20 +2621,26 @@ function validateEventFields(body, creating) {
     const deadline = text(body.registration_deadline).trim() ? parseDate(body.registration_deadline) : null;
     const capacity = Number(body.capacity), status = text(body.status || "upcoming");
     const assignmentCapacity = text(body.assignment_capacity).trim() ? Number(body.assignment_capacity) : 0;
-    const publicationStatus = text(body.publication_status || (creating ? "draft" : "published")).trim();
+    // Posting a new event publishes it immediately. Existing drafts and pending
+    // events can still be managed through the edit/review workflows.
+    const publicationStatus = creating ? "published" : text(body.publication_status || "published").trim();
     const participationRequirements = text(body.participation_requirements).trim();
+    const invitedCommittees = eventInviteCommittees({ invited_committees: body.invited_committees });
     const eligibleCourses = text(body.eligible_courses).split(",").map((item) => item.trim()).filter(Boolean).slice(0, 30);
     const eligibleYearLevels = text(body.eligible_year_levels).split(",").map((item) => item.trim()).filter(Boolean).slice(0, 10);
+    const registrationEligibleCourses = text(body.registration_eligible_courses).split(",").map((item) => item.trim()).filter(Boolean).slice(0, 30);
+    const registrationEligibleYearLevels = text(body.registration_eligible_year_levels).split(",").map((item) => item.trim()).filter(Boolean).slice(0, 10);
+    if ([...registrationEligibleCourses, ...registrationEligibleYearLevels].some((item) => item.length > 100)) return { error: "Each eligible course or year level must be under 100 characters." };
     if (!title || title.length > 255 || !description || !location || location.length > 255) return { error: "Enter a title, event description, and location." };
     if (!start || !end || end <= start) return { error: "Enter valid start and end times; the end must be after the start." };
     if (body.registration_deadline && (!deadline || deadline > start)) return { error: "The registration deadline must be valid and no later than the event start." };
     if (!Number.isInteger(capacity) || capacity < 1) return { error: "Capacity must be at least one attendee." };
     if (!Number.isInteger(assignmentCapacity) || assignmentCapacity < 0 || assignmentCapacity > 10000) return { error: "Assignment capacity must be zero (unlimited) or between 1 and 10,000." };
     if (participationRequirements.length > 1000) return { error: "Participation requirements must be under 1,000 characters." };
+    if (!invitedCommittees.length) return { error: "Choose at least one council audience for event invitations." };
     if (!(creating ? ["upcoming", "ongoing"] : ["upcoming", "ongoing", "completed", "cancelled"]).includes(status)) return { error: "Choose a valid event status." };
     if (!(["draft", "pending_approval", "published", "cancelled", "archived"].includes(publicationStatus))) return { error: "Choose a valid publication status." };
-    if (creating && !["draft", "pending_approval"].includes(publicationStatus)) return { error: "New events must be saved as a draft or submitted for approval." };
-    return { title, description, location, start_date: start, end_date: end, registration_deadline: deadline, capacity, status, publication_status: publicationStatus, assignment_capacity: assignmentCapacity, participation_open: body.participation_open !== "false", participation_requirements: participationRequirements, eligible_courses: eligibleCourses, eligible_year_levels: eligibleYearLevels, require_event_registration: body.require_event_registration === "true" };
+    return { title, description, location, start_date: start, end_date: end, registration_deadline: deadline, capacity, status, publication_status: publicationStatus, invited_committees: invitedCommittees, assignment_capacity: assignmentCapacity, participation_open: body.participation_open !== "false", participation_requirements: participationRequirements, eligible_courses: eligibleCourses, eligible_year_levels: eligibleYearLevels, require_event_registration: body.require_event_registration === "true", registration_open: body.registration_open !== "false", registration_eligible_courses: registrationEligibleCourses, registration_eligible_year_levels: registrationEligibleYearLevels, self_service_checkin: body.self_service_checkin === "true", self_service_checkout: body.self_service_checkout === "true" };
 }
 
 app.post("/api/admin/events/create", adminOnly, imageMiddleware, async (req, res, next) => {
@@ -2247,12 +2649,45 @@ app.post("/api/admin/events/create", adminOnly, imageMiddleware, async (req, res
     let cover;
     try { cover = await storeCover(req.file); }
     catch (error) { return fail(res, 422, error.message); }
+    let eventInserted = false;
     try {
         const id = await nextId("events");
-        await collections.events.insertOne({ id, ...event, cover_image: cover, registration_count: 0, assignment_count: 0, created_at: new Date() });
-        return ok(res, "Event created successfully.", { event_id: id });
+        const now = new Date();
+        const createdEvent = {
+            id,
+            ...event,
+            cover_image: cover,
+            registration_count: 0,
+            assignment_count: 0,
+            created_at: now,
+            published_at: now,
+            public_updated_at: now,
+            public_update_type: "newly_published",
+            notification_reason: "New council event",
+            notification_dedupe_key: `event:${id}:created`,
+            notification_delivery_status: "pending"
+        };
+        await collections.events.insertOne(createdEvent);
+        eventInserted = true;
+        let notificationResult;
+        try {
+            notificationResult = await notifyEventResponseMembers(createdEvent, createdEvent.notification_reason, createdEvent.notification_dedupe_key);
+            await collections.events.updateOne({ id }, { $set: { notification_delivery_status: eventNoticeStatus(notificationResult), notification_recipient_count: notificationResult.recipient_count, notification_delivered_count: notificationResult.delivered_count, notification_last_attempt_at: new Date() } });
+        }
+        catch (notificationError) {
+            console.error("Event was published, but invitation setup failed:", notificationError?.message || "unknown error");
+            notificationResult = { recipient_count: 0, delivered_count: 0, failed_count: -1 };
+            await collections.events.updateOne({ id }, { $set: { notification_delivery_status: "failed", notification_last_attempt_at: new Date() } }).catch(() => {});
+        }
+        const hasNotificationFailure = notificationResult.failed_count !== 0;
+        const message = hasNotificationFailure
+            ? "Event published, but some council invitations could not be delivered. Use Retry notifications on the event list; do not repost the event."
+            : notificationResult.recipient_count
+                ? "Event published and council members notified."
+                : "Event published. No current council members match the selected invitation audience.";
+        return ok(res, message, { event_id: id, publication_status: "published", notifications: notificationResult });
     } catch (error) {
-        await fs.unlink(path.join(uploadRoot, cover.slice("/uploads/".length))).catch(() => {});
+        if (!eventInserted) await removeLocalCover(cover);
         return next(error);
     }
 });
@@ -2277,9 +2712,53 @@ app.post("/api/admin/events/update", adminOnly, imageMiddleware, async (req, res
         const publicUpdate = isPublicUpdate
             ? { public_updated_at: now, public_update_type: event.publication_status === "cancelled" || event.status === "cancelled" ? "event_cancelled" : "details_updated" }
             : {};
-        await collections.events.updateOne({ id }, { $set: { ...event, cover_image: cover, registration_count: registrationCount, updated_at: now, ...publicUpdate } });
+        const participationFields = ["title", "description", "location", "start_date", "end_date", "status", "publication_status", "participation_open", "participation_requirements", "eligible_courses", "eligible_year_levels", "invited_committees"];
+        const participationChanged = participationFields.some((field) => {
+            const before = existing[field] instanceof Date ? existing[field].getTime() : JSON.stringify(existing[field] ?? null);
+            const after = event[field] instanceof Date ? event[field].getTime() : JSON.stringify(event[field] ?? null);
+            return before !== after;
+        });
+        const notificationReason = event.status === "cancelled" || event.publication_status === "cancelled" ? "Event cancelled" : "Event details changed";
+        const notificationKey = `event:${id}:updated:${now.getTime()}`;
+        await collections.events.updateOne({ id }, { $set: {
+            ...event, cover_image: cover, registration_count: registrationCount, updated_at: now, ...publicUpdate,
+            ...(participationChanged ? { notification_reason: notificationReason, notification_dedupe_key: notificationKey, notification_delivery_status: "pending" } : {})
+        } });
+        let notificationResult = null;
+        if (participationChanged) {
+            try {
+                notificationResult = await notifyEventResponseMembers({ id, ...event }, notificationReason, notificationKey);
+                await collections.events.updateOne({ id }, { $set: { notification_delivery_status: eventNoticeStatus(notificationResult), notification_recipient_count: notificationResult.recipient_count, notification_delivered_count: notificationResult.delivered_count, notification_last_attempt_at: new Date() } });
+            }
+            catch (notificationError) {
+                console.error("Event changes were saved, but council notifications failed:", notificationError?.message || "unknown error");
+                notificationResult = { recipient_count: 0, delivered_count: 0, failed_count: -1 };
+                await collections.events.updateOne({ id }, { $set: { notification_delivery_status: "failed", notification_last_attempt_at: new Date() } }).catch(() => {});
+            }
+        }
         if (req.file && existing.cover_image !== cover) await removeLocalCover(existing.cover_image);
-        return ok(res, "Event updated successfully.", { event_id: id });
+        const notificationFailed = notificationResult && notificationResult.failed_count !== 0;
+        const notificationEmpty = notificationResult && notificationResult.recipient_count === 0;
+        const message = notificationFailed
+            ? "Event changes were saved, but some council notifications could not be delivered. Use Retry notifications on the event list."
+            : notificationEmpty
+                ? "Event updated, but no current council members match the selected invitation audience."
+                : "Event updated successfully.";
+        return ok(res, message, { event_id: id, notifications: notificationResult });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/events/notifications/retry", adminOnly, async (req, res, next) => {
+    const id = Number(req.body.event_id);
+    if (!Number.isSafeInteger(id) || id < 1) return fail(res, 422, "Choose a valid event.");
+    try {
+        const event = await collections.events.findOne({ id });
+        if (!event) return fail(res, 404, "Event not found.");
+        if (event.notification_delivery_status !== "failed" || !event.notification_dedupe_key) return fail(res, 409, "This event has no failed notification batch to retry.");
+        const reason = event.notification_reason || "Event details changed";
+        const result = await notifyEventResponseMembers(event, reason, event.notification_dedupe_key);
+        await collections.events.updateOne({ id }, { $set: { notification_delivery_status: eventNoticeStatus(result), notification_recipient_count: result.recipient_count, notification_delivered_count: result.delivered_count, notification_last_attempt_at: new Date() } });
+        return ok(res, result.failed_count ? "Some council notifications are still failing. Retry again when the connection is stable." : result.recipient_count ? "Council notifications delivered." : "No current council members match this invitation audience.", { notifications: result });
     } catch (error) { return next(error); }
 });
 
@@ -2300,18 +2779,19 @@ app.post("/api/admin/events/review", adminOnly, async (req, res, next) => {
 });
 
 async function removeLocalCover(cover) {
-    if (!/^\/uploads\/events\/event-[a-f0-9]{24}\.(jpg|png|webp)$/.test(cover || "")) return;
+    const match = /^\/(?:api\/)?uploads\/events\/event-([a-f0-9]{24})\.(jpg|png|webp)$/.exec(cover || "");
+    if (!match) return;
     const stillReferenced = await collections.events.countDocuments({ cover_image: cover });
     if (stillReferenced) return;
     if (process.env.VERCEL === "1") {
-        const id = new ObjectId(cover.match(/event-([a-f0-9]{24})/)[1]);
+        const id = new ObjectId(match[1]);
         await eventCovers.delete(id).catch(() => {});
         return;
     }
     await fs.unlink(path.join(uploadRoot, "events", path.basename(cover))).catch(() => {});
 }
 
-app.post("/api/admin/events/delete", adminOnly, async (req, res, next) => {
+app.post("/api/admin/events/archive", adminOnly, async (req, res, next) => {
     const id = Number(req.body.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 422, "A valid event ID is required.");
     try {
@@ -2320,6 +2800,101 @@ app.post("/api/admin/events/delete", adminOnly, async (req, res, next) => {
         if (event.publication_status === "archived") return fail(res, 409, "This event is already archived.");
         await collections.events.updateOne({ id }, { $set: { publication_status: "archived", archived_at: new Date(), updated_at: new Date() } });
         return ok(res, "Event archived. Its attendance and financial records remain available in the historical record.", { event_title: event.title });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/events/delete", adminOnly, async (req, res, next) => {
+    const id = Number(req.body.id);
+    if (!Number.isInteger(id) || id < 1) return fail(res, 422, "A valid event ID is required.");
+    try {
+        const event = await collections.events.findOne({ id });
+        if (!event) return fail(res, 404, "Event not found.");
+
+        const responses = await collections.eventResponses.find({ event_id: id }, { projection: { status: 1, responded_at: 1, history: 1 } }).toArray();
+        const hasRecordedResponses = responses.some((response) => response.status !== "pending" || response.responded_at || response.history?.length);
+        const [registrationCount, attendanceCount, studentParticipationCount, assignmentCount, workItemCount, financeCount, highlightCount, scheduleCount, attendanceAuditCount] = await Promise.all([
+            collections.registrations.countDocuments({ event_id: id }),
+            collections.attendance.countDocuments({ event_id: id }),
+            collections.studentEventParticipations.countDocuments({ event_id: id }),
+            collections.eventAssignments.countDocuments({ event_id: id }),
+            collections.committeeWorkItems.countDocuments({ event_id: id }),
+            collections.financialRecords.countDocuments({ event_id: id }),
+            collections.event_highlights.countDocuments({ event_id: id }),
+            collections.event_schedules.countDocuments({ event_id: id }),
+            collections.attendanceAudit.countDocuments({ event_id: id })
+        ]);
+        if (hasRecordedResponses || registrationCount || attendanceCount || studentParticipationCount || assignmentCount || workItemCount || financeCount || highlightCount || scheduleCount || attendanceAuditCount) {
+            return fail(res, 409, "This event has participation, registration, attendance, assignment, or other history and cannot be permanently deleted. Archive it to preserve those records.");
+        }
+
+        const result = await collections.events.deleteOne({ id });
+        if (!result.deletedCount) return fail(res, 404, "Event not found.");
+        await Promise.all([
+            collections.eventResponses.deleteMany({ event_id: id }),
+            collections.notifications.deleteMany({ event_id: id })
+        ]);
+        await removeLocalCover(event.cover_image);
+        return ok(res, "Event permanently deleted.", { event_id: id, event_title: event.title });
+    } catch (error) { return next(error); }
+});
+
+// Standalone council announcements are managed separately from event notices.
+app.get("/api/admin/announcements", adminOnly, async (_req, res, next) => {
+    try {
+        const announcements = await collections.publicAnnouncements.find({}).sort({ updated_at: -1 }).limit(200).toArray();
+        return ok(res, null, { announcements });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/announcements/save", adminOnly, async (req, res, next) => {
+    const id = Number(req.body.id || 0);
+    const title = text(req.body.title).trim();
+    const category = text(req.body.category || "General").trim();
+    const content = text(req.body.content).trim();
+    const status = text(req.body.status || "published").trim();
+    if (id && (!Number.isSafeInteger(id) || id < 1)) return fail(res, 422, "A valid announcement ID is required.");
+    if (!title || title.length > 180) return fail(res, 422, "Enter an announcement title under 180 characters.");
+    if (!category || category.length > 60) return fail(res, 422, "Enter a category under 60 characters.");
+    if (!content || content.length > 5000) return fail(res, 422, "Enter announcement details under 5,000 characters.");
+    if (!["draft", "published"].includes(status)) return fail(res, 422, "Choose draft or published status.");
+    try {
+        const now = new Date();
+        const fields = { title, category, content, status, updated_at: now };
+        if (!id) {
+            const newId = await nextId("public_announcements");
+            const announcement = {
+                id: newId,
+                ...fields,
+                created_by: Number(req.session.userId),
+                created_at: now,
+                published_at: status === "published" ? now : null,
+                public_updated_at: status === "published" ? now : null
+            };
+            await collections.publicAnnouncements.insertOne(announcement);
+            return ok(res, status === "published" ? "Announcement published." : "Announcement saved as a draft.", { announcement_id: newId });
+        }
+
+        const existing = await collections.publicAnnouncements.findOne({ id });
+        if (!existing) return fail(res, 404, "Announcement not found.");
+        if (existing.status === "archived") return fail(res, 409, "Archived announcements cannot be edited.");
+        const changed = ["title", "category", "content"].some((field) => existing[field] !== fields[field]);
+        const becamePublic = existing.status !== "published" && status === "published";
+        if (status === "published" && (changed || becamePublic)) fields.public_updated_at = now;
+        if (status === "published" && !existing.published_at) fields.published_at = now;
+        const result = await collections.publicAnnouncements.updateOne({ id, status: { $ne: "archived" } }, { $set: fields });
+        if (!result.matchedCount) return fail(res, 409, "Archived announcements cannot be edited.");
+        return ok(res, status === "published" ? "Announcement saved and published." : "Announcement saved as a draft.", { announcement_id: id });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/announcements/archive", adminOnly, async (req, res, next) => {
+    const id = Number(req.body.id);
+    if (!Number.isSafeInteger(id) || id < 1) return fail(res, 422, "A valid announcement ID is required.");
+    try {
+        const now = new Date();
+        const result = await collections.publicAnnouncements.updateOne({ id, status: { $ne: "archived" } }, { $set: { status: "archived", archived_at: now, updated_at: now } });
+        if (!result.matchedCount) return fail(res, 404, "Announcement not found or already archived.");
+        return ok(res, "Announcement archived. Its record remains available in the admin list.");
     } catch (error) { return next(error); }
 });
 
@@ -2361,31 +2936,172 @@ app.post("/api/admin/highlights/delete", adminOnly, async (req, res, next) => {
     } catch (error) { return next(error); }
 });
 
-// Attendance check-in
+// New event attendance is keyed by event and account. Legacy registration IDs
+// are only consulted to find older attendance rows during transition.
+async function transitionEventAttendance({ event, participantType, user, method = "qr", operatorUserId = null }) {
+    const participantKey = `event:${event.id}:user:${user.id}`;
+    const identity = { user_id: user.id };
+    async function findAttendanceRecord() {
+        let record = await collections.attendance.findOne({ participant_key: participantKey });
+        const legacyRegistration = await collections.registrations.findOne({ user_id: user.id, event_id: event.id });
+        if (!record && legacyRegistration) {
+            record = await collections.attendance.findOne({ registration_id: legacyRegistration.id, participant_key: { $exists: false } }, { sort: { time_in: -1 } });
+            if (record) {
+                const existingType = record.participant_type || "student";
+                await collections.attendance.updateOne({ id: record.id }, { $set: { participant_key: participantKey, participant_type: existingType, event_id: event.id, user_id: user.id } });
+                record = { ...record, participant_key: participantKey, participant_type: existingType, event_id: event.id, user_id: user.id };
+            }
+        }
+        return record;
+    }
+
+    return transitionAttendanceRecord({
+        findExisting: findAttendanceRecord,
+        createRecord: async () => {
+            const now = new Date();
+            return { id: await nextId("attendance"), participant_key: participantKey, participant_type: participantType, event_id: event.id, ...identity, time_in: now, time_out: null, checkin_method: method, checkout_method: null, recorded_by: operatorUserId, created_at: now };
+        },
+        insertRecord: (record) => collections.attendance.insertOne(record),
+        checkOutRecord: async (record) => {
+            const timeOut = new Date();
+            const update = await collections.attendance.updateOne({ id: record.id, time_out: null }, { $set: { time_out: timeOut, checkout_method: method, checkout_recorded_by: operatorUserId } });
+            const latest = update.modifiedCount ? { ...record, time_out: timeOut } : await collections.attendance.findOne({ participant_key: participantKey });
+            return { modified: Boolean(update.modifiedCount), record: latest };
+        }
+    });
+}
+
+async function resolveAttendanceParticipant(qrValue, event) {
+    const staticIdentity = /^AUSSC:IDENTITY:([A-Za-z0-9-]{3,24}):([A-Za-z0-9_-]{43})$/.exec(qrValue);
+    if (staticIdentity) {
+        const user = await collections.users.findOne({ student_id: staticIdentity[1] });
+        const unsignedValue = `AUSSC:IDENTITY:${staticIdentity[1]}`;
+        const expectedSignature = crypto.createHmac("sha256", qrSigningSecret).update(unsignedValue).digest("base64url");
+        const supplied = Buffer.from(staticIdentity[2]);
+        const expected = Buffer.from(expectedSignature);
+        if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return { error: "This council identity QR is invalid or has been altered." };
+        if (!user || !isAuthorizedCouncilMember(user, councilPositions, councilCommittees)) return { error: "This reusable identity QR is for council members. Students must use the QR generated for this event." };
+        return { type: "council", user };
+    }
+    const studentEventQr = readStudentEventQr(qrValue);
+    if (!studentEventQr) return { error: "This is not a valid council identity QR or student event QR." };
+    if (studentEventQr.event_id !== event.id) return { error: "This student QR belongs to a different event. Generate a QR from the selected event page.", wrongEvent: true };
+    if (studentEventQr.title !== event.title || studentEventQr.description !== event.description) return { error: "The event details changed after this QR was generated. Ask the student to generate a fresh QR.", staleEventQr: true };
+    const user = await collections.users.findOne({ student_id: studentEventQr.student_id });
+    if (!user || user.role !== "student" || isAuthorizedCouncilMember(user, councilPositions, councilCommittees)) return { error: "No active student account matches this event QR." };
+    const participation = await collections.studentEventParticipations.findOne({ event_id: event.id, user_id: user.id, status: "accepted" }, { projection: { id: 1 } });
+    if (!participation) return { error: "The student must agree to participate before this event QR can be used." };
+    return { type: "student", user };
+}
+
+async function handleAttendanceScan({ eventId, qrValue, operatorUserId, method = "qr", selfUserId = null, selfParticipantType = "" }) {
+    const event = await collections.events.findOne({ id: eventId });
+    if (!event || event.status === "cancelled" || event.publication_status === "cancelled") return { error: "This event is cancelled or unavailable." };
+    let participant;
+    if (selfUserId) {
+        const user = await collections.users.findOne({ id: Number(selfUserId) });
+        if (!user) return { error: "Your account could not be found." };
+        const useCouncilIdentity = selfParticipantType === "council" || (!selfParticipantType && user.role !== "student");
+        if (useCouncilIdentity) {
+            if (!isAuthorizedCouncilMember(user, councilPositions, councilCommittees)) return { error: "A current council appointment or committee assignment is required." };
+            participant = { type: "council", user };
+        } else if (user.role === "student") {
+            participant = { type: "student", user };
+        } else {
+            return { error: "Choose the account type for your self-service attendance." };
+        }
+    } else {
+        participant = await resolveAttendanceParticipant(qrValue, event);
+        if (participant.error) return participant;
+    }
+    const key = `event:${event.id}:user:${participant.user.id}`;
+    let current = await collections.attendance.findOne({ participant_key: key });
+    if (!current) {
+        const registration = await collections.registrations.findOne({ user_id: participant.user.id, event_id: event.id });
+        if (registration) current = await collections.attendance.findOne({ registration_id: registration.id }, { sort: { time_in: -1 } });
+    }
+    const expectedAction = attendanceScanAction(current);
+    const now = new Date();
+    if (selfUserId && ((expectedAction === "time_in" && now < new Date(event.start_date)) || now > new Date(event.end_date))) {
+        return { error: "Self-service attendance is available only while this event is in progress." };
+    }
+    if (selfUserId && ((expectedAction === "time_in" && !event.self_service_checkin) || (expectedAction === "time_out" && !event.self_service_checkout))) {
+        return { error: expectedAction === "time_in" ? "Self check-in is disabled for this event. Ask an attendance officer to scan your pass." : "Self check-out is disabled for this event. Ask an attendance officer to scan your pass." };
+    }
+    const transition = await transitionEventAttendance({ event, participantType: participant.type, user: participant.user, method, operatorUserId });
+    return {
+        ...transition,
+        participant_type: transition.record?.participant_type || participant.type,
+        participant_key: key,
+        registration_code: null,
+        attendee: {
+            name: `${participant.user.first_name || ""} ${participant.user.last_name || ""}`.trim(),
+            student_id: participant.user.student_id || "—", email: participant.user.email || "—",
+            course: participant.user.course || null, year_level: participant.user.year_level || null,
+            contact: participant.user.contact || null, council_position: participant.user.council_position || null,
+            committee_assignment: participant.user.committee_assignment || null
+        },
+        event: { id: event.id, title: event.title, location: event.location, start_date: event.start_date, end_date: event.end_date },
+        time_in: transition.record?.time_in || null, time_out: transition.record?.time_out || null
+    };
+}
+
 app.get("/api/admin/attendance", adminOnly, async (req, res, next) => {
     const eventId = req.query.event_id ? Number(req.query.event_id) : null;
     if (eventId !== null && (!Number.isInteger(eventId) || eventId < 1)) return fail(res, 422, "Choose a valid event.");
+    const from = text(req.query.from).trim(), to = text(req.query.to).trim();
     try {
-        const attendanceRows = await collections.attendance.find({}).sort({ time_in: -1 }).toArray();
-        const registrationIds = [...new Set(attendanceRows.map((record) => record.registration_id))];
+        const query = {};
+        if (eventId) query.event_id = eventId;
+        if (from || to) {
+            query.time_in = {};
+            if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) query.time_in.$gte = new Date(`${from}T00:00:00+08:00`);
+            if (to && /^\d{4}-\d{2}-\d{2}$/.test(to)) { const endOfDay = new Date(`${to}T00:00:00+08:00`); endOfDay.setTime(endOfDay.getTime() + 24 * 60 * 60 * 1000); query.time_in.$lt = endOfDay; }
+        }
+        const records = await collections.attendance.find(query).sort({ time_in: -1 }).limit(10000).toArray();
+        const registrationIds = [...new Set(records.map((record) => record.registration_id).filter(Number.isInteger))];
+        const directUserIds = records.map((record) => record.user_id).filter(Number.isInteger);
+        const userIds = [...new Set([...directUserIds])];
+        const eventIds = [...new Set(records.map((record) => record.event_id).filter(Number.isInteger))];
         const registrations = await collections.registrations.find({ id: { $in: registrationIds } }).toArray();
-        const registrationMap = new Map(registrations.map((registration) => [registration.id, registration]));
-        const userIds = [...new Set(registrations.map((registration) => registration.user_id))];
-        const eventIds = [...new Set(registrations.map((registration) => registration.event_id))];
+        const joinedUserIds = [...new Set([...userIds, ...registrations.map((registration) => registration.user_id)])];
+        const joinedEventIds = [...new Set([...eventIds, ...registrations.map((registration) => registration.event_id)])];
         const [users, events] = await Promise.all([
-            collections.users.find({ id: { $in: userIds } }, { projection: { id: 1, first_name: 1, last_name: 1, student_id: 1, email: 1, course: 1, year_level: 1 } }).toArray(),
-            collections.events.find({ id: { $in: eventIds } }, { projection: { id: 1, title: 1, start_date: 1 } }).toArray()
+            collections.users.find({ id: { $in: joinedUserIds } }, { projection: { id: 1, first_name: 1, last_name: 1, student_id: 1, email: 1, course: 1, year_level: 1, council_position: 1, council_department: 1, committee_assignment: 1 } }).toArray(),
+            collections.events.find({ id: { $in: joinedEventIds } }, { projection: { id: 1, title: 1, start_date: 1 } }).toArray()
         ]);
-        const userMap = new Map(users.map((user) => [user.id, user]));
-        const eventMap = new Map(events.map((event) => [event.id, event]));
-        const rows = attendanceRows.map((record) => {
+        const registrationMap = new Map(registrations.map((item) => [item.id, item]));
+        const userMap = new Map(users.map((item) => [item.id, item]));
+        const eventMap = new Map(events.map((item) => [item.id, item]));
+        const rows = records.map((record) => {
             const registration = registrationMap.get(record.registration_id);
-            const user = registration && userMap.get(registration.user_id);
-            const event = registration && eventMap.get(registration.event_id);
-            if (!registration || !user || !event) return null;
-            return { id: record.id, time_in: record.time_in, registration_code: registration.registration_code, event_id: event.id, event_title: event.title, event_start: event.start_date, status: registration.status, first_name: user.first_name, last_name: user.last_name, student_id: user.student_id, email: user.email, course: user.course, year_level: user.year_level };
-        }).filter((row) => row && (!eventId || row.event_id === eventId));
-        return ok(res, null, { rows, count: rows.length, event_id: eventId });
+            const user = userMap.get(record.user_id || registration?.user_id);
+            const event = eventMap.get(record.event_id || registration?.event_id);
+            if (!user || !event) return null;
+            const snapshot = registration?.participant_snapshot || {};
+            return {
+                id: record.id, participant_type: record.participant_type || "student", time_in: record.time_in, time_out: record.time_out || null,
+                currently_present: !record.time_out, registration_id: registration?.id || null, registration_code: registration?.registration_code || null,
+                event_id: event.id, event_title: event.title, event_start: event.start_date,
+                status: registration?.status || "recorded", first_name: snapshot.first_name || user.first_name, last_name: snapshot.last_name || user.last_name,
+                student_id: snapshot.student_id || user.student_id, email: snapshot.email || user.email, course: snapshot.course || user.course,
+                year_level: snapshot.year_level || user.year_level, contact: snapshot.contact || null, council_position: user.council_position || null,
+                council_department: user.council_department || null, committee_assignment: user.committee_assignment || null
+            };
+        }).filter(Boolean);
+        const studentRows = rows.filter((row) => row.participant_type === "student");
+        const councilRows = rows.filter((row) => row.participant_type === "council");
+        const groupCounts = (subset, field, fallback = "Not specified") => Object.entries(subset.reduce((counts, row) => {
+            const key = row[field] || fallback; counts[key] = (counts[key] || 0) + 1; return counts;
+        }, {})).map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+        const byEvent = groupCounts(rows, "event_title");
+        const byMonth = groupCounts(rows.map((row) => ({ month: row.time_in ? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit" }).format(new Date(row.time_in)) : "Unknown" })), "month");
+        const summary = {
+            total_sessions: rows.length, students: studentRows.length, council_members: councilRows.length,
+            currently_present: rows.filter((row) => row.currently_present).length,
+            checked_out: rows.filter((row) => row.time_out).length
+        };
+        return ok(res, null, { rows, student_rows: studentRows, council_rows: councilRows, count: rows.length, event_id: eventId, from, to, summary, analytics: { by_event: byEvent, by_course: groupCounts(studentRows, "course"), by_year_level: groupCounts(studentRows, "year_level"), by_council_position: groupCounts(councilRows, "council_position"), by_committee: groupCounts(councilRows, "committee_assignment"), by_month: byMonth }, limit: 10000 });
     } catch (error) { return next(error); }
 });
 
@@ -2396,47 +3112,94 @@ app.get("/api/admin/attendance/lookup", adminOnly, async (req, res, next) => {
     try {
         const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const users = await collections.users.find({ $or: [
-            { student_id: { $regex: `^${escaped}`, $options: "i" } },
-            { email: { $regex: `^${escaped}`, $options: "i" } },
-            { first_name: { $regex: escaped, $options: "i" } },
-            { last_name: { $regex: escaped, $options: "i" } }
-        ] }, { projection: { id: 1, first_name: 1, last_name: 1, student_id: 1, email: 1 } }).limit(20).toArray();
+            { student_id: { $regex: `^${escaped}`, $options: "i" } }, { email: { $regex: `^${escaped}`, $options: "i" } },
+            { first_name: { $regex: escaped, $options: "i" } }, { last_name: { $regex: escaped, $options: "i" } }
+        ] }, { projection: { id: 1, role: 1, first_name: 1, last_name: 1, student_id: 1, email: 1, course: 1, year_level: 1, council_position: 1, council_department: 1, committee_assignment: 1 } }).limit(40).toArray();
         const ids = users.map((user) => user.id);
         const registrations = await collections.registrations.find({ user_id: { $in: ids }, event_id: eventId, status: { $in: ["registered", "attended"] } }).toArray();
+        const registrationMap = new Map(registrations.map((registration) => [registration.user_id, registration]));
         const userMap = new Map(users.map((user) => [user.id, user]));
-        return ok(res, null, { matches: registrations.map((registration) => { const user = userMap.get(registration.user_id); return { registration_code: registration.registration_code, status: registration.status, name: `${user.first_name} ${user.last_name}`, student_id: user.student_id, email: user.email }; }) });
+        const matches = users.filter((user) => user.role === "student" && !isAuthorizedCouncilMember(user, councilPositions, councilCommittees)).map((user) => {
+            const registration = registrationMap.get(user.id); const snapshot = registration?.participant_snapshot || {};
+            return { participant_type: "student", registration_id: registration?.id || null, user_id: user.id, status: registration?.status || "eligible", name: `${snapshot.first_name || user.first_name} ${snapshot.last_name || user.last_name}`, student_id: snapshot.student_id || user.student_id, email: snapshot.email || user.email, course: snapshot.course || user.course, year_level: snapshot.year_level || user.year_level, contact: snapshot.contact || null };
+        });
+        for (const user of users.filter((item) => isAuthorizedCouncilMember(item, councilPositions, councilCommittees))) {
+            matches.push({ participant_type: "council", user_id: user.id, status: "eligible", name: `${user.first_name} ${user.last_name}`, student_id: user.student_id, email: user.email, council_position: user.council_position, committee_assignment: user.committee_assignment });
+        }
+        const annotatedMatches = await Promise.all(matches.slice(0, 30).map(async (match) => {
+            const attendanceConditions = [{ participant_key: `event:${eventId}:user:${match.user_id}` }, { user_id: match.user_id, event_id: eventId }];
+            if (match.registration_id) attendanceConditions.push({ participant_key: `student:${match.registration_id}` }, { registration_id: match.registration_id });
+            const record = await collections.attendance.findOne({ $or: attendanceConditions }, { sort: { time_in: -1 } });
+            return { ...match, attendance_state: !record ? "not_started" : record.time_out ? "completed" : "present" };
+        }));
+        return ok(res, null, { matches: annotatedMatches });
     } catch (error) { return next(error); }
 });
 
 app.post("/api/attendance/checkin", adminOnly, async (req, res, next) => {
-    const code = text(req.body.registration_code).trim();
-    const expectedEventId = req.body.event_id ? Number(req.body.event_id) : null;
-    if (!code || code.length > 100) return fail(res, 422, "The QR code is empty or invalid.");
-    if (expectedEventId !== null && (!Number.isInteger(expectedEventId) || expectedEventId < 1)) return fail(res, 422, "Choose a valid event.");
+    const qrValue = text(req.body.qr_value || req.body.registration_code).trim();
+    const eventId = Number(req.body.event_id);
+    if (!qrValue || qrValue.length > studentEventQrMaxLength) return fail(res, 422, "The QR code is empty or invalid.");
+    if (!Number.isInteger(eventId) || eventId < 1) return fail(res, 422, "Choose the event the attendance team is serving.");
     try {
-        const registration = await collections.registrations.findOne({ registration_code: code });
-        if (!registration) return fail(res, 404, "No registration matches this QR code.");
-        const [user, event] = await Promise.all([
-            collections.users.findOne({ id: registration.user_id }),
-            collections.events.findOne({ id: registration.event_id })
-        ]);
-        if (!user || !event) return fail(res, 404, "The registration data is incomplete.");
-        const attendee = { name: `${user.first_name} ${user.last_name}`, student_id: user.student_id, email: user.email, course: user.course, year_level: user.year_level };
-        const eventInfo = { title: event.title, location: event.location, start_date: event.start_date, end_date: event.end_date };
-        if (expectedEventId && event.id !== expectedEventId) return ok(res, "This QR pass is for a different event.", { success: false, wrong_event: true, attendee, event: eventInfo, registration_code: code, registration_status: registration.status });
-        if (registration.status === "cancelled") return ok(res, "This registration was cancelled and cannot be checked in.", { success: false, attendee, event: eventInfo, registration_code: code, registration_status: "cancelled" });
-        if (registration.status === "attended") {
-            const priorAttendance = await collections.attendance.findOne({ registration_id: registration.id }, { sort: { time_in: -1 } });
-            return ok(res, "This student has already checked in.", { success: false, already_checked_in: true, attendee, event: eventInfo, registration_code: code, registration_status: "attended", time_in: priorAttendance?.time_in || null });
+        const result = await handleAttendanceScan({ eventId, qrValue, operatorUserId: Number(req.session.userId) });
+        if (result.error) return ok(res, result.error, { success: false, wrong_event: Boolean(result.wrongEvent), invalid: !result.wrongEvent });
+        return ok(res, result.message, result);
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/attendance/self", signedIn, async (req, res, next) => {
+    const eventId = Number(req.body.event_id);
+    if (!Number.isInteger(eventId) || eventId < 1) return fail(res, 422, "Choose a valid event.");
+    const participantType = text(req.body.participant_type).trim();
+    if (participantType && !["student", "council"].includes(participantType)) return fail(res, 422, "Choose a valid participant type.");
+    try {
+        const result = await handleAttendanceScan({ eventId, operatorUserId: Number(req.session.userId), selfUserId: Number(req.session.userId), selfParticipantType: participantType, method: "self_service" });
+        if (result.error) return fail(res, 403, result.error);
+        return ok(res, result.message, result);
+    } catch (error) { return next(error); }
+});
+
+app.get("/api/attendance/mine", signedIn, async (req, res, next) => {
+    try {
+        const userId = Number(req.session.userId);
+        const registrations = await collections.registrations.find({ user_id: userId }, { projection: { id: 1 } }).toArray();
+        const registrationIds = registrations.map((registration) => registration.id);
+        const records = await collections.attendance.find({ $or: [
+            { user_id: userId },
+            ...(registrationIds.length ? [{ registration_id: { $in: registrationIds } }] : [])
+        ] }).sort({ time_in: -1 }).limit(500).toArray();
+        const eventIds = [...new Set(records.map((record) => record.event_id).filter(Number.isInteger))];
+        const events = await collections.events.find({ id: { $in: eventIds } }, { projection: { id: 1, title: 1, location: 1, start_date: 1, end_date: 1 } }).toArray();
+        const eventMap = new Map(events.map((event) => [event.id, event]));
+        return ok(res, null, { attendance: records.map((record) => ({
+            event: eventMap.get(record.event_id) || null, time_in: record.time_in, time_out: record.time_out || null,
+            duration_ms: record.time_out ? Math.max(0, new Date(record.time_out).getTime() - new Date(record.time_in).getTime()) : null
+        })).filter((record) => record.event) });
+    } catch (error) { return next(error); }
+});
+
+app.post("/api/admin/attendance/manual", adminOnly, async (req, res, next) => {
+    const eventId = Number(req.body.event_id), participantType = text(req.body.participant_type);
+    const registrationId = Number(req.body.registration_id), userId = Number(req.body.user_id);
+    if (!Number.isInteger(eventId) || eventId < 1 || !["student", "council"].includes(participantType)) return fail(res, 422, "Choose a valid event and attendee.");
+    try {
+        let participant;
+        if (participantType === "student") {
+            const user = Number.isSafeInteger(userId) && userId > 0 ? await collections.users.findOne({ id: userId, role: "student" }) : null;
+            if (!user || isAuthorizedCouncilMember(user, councilPositions, councilCommittees)) return fail(res, 404, "No active student account matches this event.");
+            const registration = await collections.registrations.findOne({ id: registrationId, user_id: user.id, event_id: eventId, status: { $in: ["registered", "attended"] } });
+            participant = { type: "student", ...(registration ? { registration } : {}), user };
+        } else {
+            const user = await getAuthorizedCouncilCredentialUser(userId);
+            if (!user) return fail(res, 404, "This account is no longer on the authorized council roster.");
+            participant = { type: "council", user };
         }
-        const update = await collections.registrations.updateOne({ id: registration.id, status: "registered" }, { $set: { status: "attended" } });
-        if (!update.modifiedCount) {
-            const latest = await collections.attendance.findOne({ registration_id: registration.id }, { sort: { time_in: -1 } });
-            return ok(res, "This student has already checked in.", { success: false, already_checked_in: true, attendee, event: eventInfo, registration_code: code, registration_status: "attended", time_in: latest?.time_in || null });
-        }
-        const timeIn = new Date();
-        await collections.attendance.insertOne({ id: await nextId("attendance"), registration_id: registration.id, time_in: timeIn, time_out: null });
-        return ok(res, "Registration verified. Attendance recorded.", { attendee, event: eventInfo, registration_code: code, registration_status: "attended", time_in: timeIn });
+        const event = await collections.events.findOne({ id: eventId });
+        if (!event || event.status === "cancelled") return fail(res, 404, "Event not found or cancelled.");
+        const transition = await transitionEventAttendance({ event, participantType: participant.type, registration: participant.registration, user: participant.user, method: "manual", operatorUserId: Number(req.session.userId) });
+        await collections.attendanceAudit.insertOne({ id: await nextId("attendance_audit"), action: transition.action === "time_out" ? "manual_time_out" : transition.action === "time_in" ? "manual_time_in" : "manual_duplicate", participant_type: participant.type, event_id: eventId, registration_id: participant.registration?.id || null, user_id: participant.user.id, attendance_id: transition.record?.id || null, operator_user_id: Number(req.session.userId), created_at: new Date() });
+        return ok(res, transition.message, { ...transition, participant_type: participant.type, event: { id: event.id, title: event.title, location: event.location, start_date: event.start_date }, time_in: transition.record?.time_in || null, time_out: transition.record?.time_out || null, attendee: { name: `${participant.user.first_name} ${participant.user.last_name}`, student_id: participant.user.student_id || "—", email: participant.user.email || "—" } });
     } catch (error) { return next(error); }
 });
 
@@ -2445,7 +3208,7 @@ app.use("/api", (req, res) => fail(res, 404, "API route not found. Confirm the b
 app.use((error, req, res, _next) => {
     if (res.headersSent) return;
     const requestId = req.requestId || crypto.randomUUID();
-    console.error(`[${requestId}] ${req.method} ${req.path} failed:`, error);
+    console.error(`[${requestId}] ${req.method} ${req.path} failed (${error?.name || "Error"}, code ${error?.code ?? "n/a"}).`);
     if (error?.code === 13 || error?.codeName === "Unauthorized") {
         databaseReady = false;
         return fail(res, 503, "The database account lacks permission to access sign-in data. Grant it read/write access to the configured database.", {
@@ -2485,13 +3248,16 @@ async function connectDatabase() {
     collections = {
         users: db.collection("users"), events: db.collection("events"),
         registrations: db.collection("registrations"), attendance: db.collection("attendance"),
+        publicAnnouncements: db.collection("public_announcements"),
+        councilMemberCredentials: db.collection("council_member_credentials"), attendanceAudit: db.collection("attendance_audit"),
+        eventResponses: db.collection("event_responses"), studentEventParticipations: db.collection("student_event_participations"), councilClassSchedules: db.collection("council_class_schedules"),
         event_highlights: db.collection("event_highlights"), event_schedules: db.collection("event_schedules"),
         eventAssignments: db.collection("event_assignments"), committeeWorkItems: db.collection("committee_work_items"), notifications: db.collection("notifications"), financialRecords: db.collection("financial_records"),
         governanceMeetings: db.collection("governance_meetings"), councilAttendance: db.collection("council_attendance"),
         councilAttendancePasses: db.collection("council_attendance_passes"), councilExcuses: db.collection("council_excuses"),
         councilReports: db.collection("council_committee_reports"), councilInventory: db.collection("council_inventory"),
         passwordResetOtps: db.collection("password_reset_otps"),
-        sessions: db.collection("sessions"), counters: db.collection("counters")
+        sessions: db.collection("sessions"), counters: db.collection("counters"), rateLimits: db.collection("auth_rate_limits")
     };
     await Promise.all([
         collections.users.createIndex({ id: 1 }, { unique: true }),
@@ -2499,12 +3265,22 @@ async function connectDatabase() {
         collections.users.createIndex({ student_id: 1 }, { unique: true }),
         collections.events.createIndex({ id: 1 }, { unique: true }),
         collections.events.createIndex({ status: 1, start_date: 1 }),
+        collections.publicAnnouncements.createIndex({ id: 1 }, { unique: true }),
+        collections.publicAnnouncements.createIndex({ status: 1, public_updated_at: -1 }),
         collections.registrations.createIndex({ id: 1 }, { unique: true }),
         collections.registrations.createIndex({ user_id: 1, event_id: 1 }, { unique: true }),
         collections.registrations.createIndex({ registration_code: 1 }, { unique: true }),
         collections.registrations.createIndex({ event_id: 1, status: 1 }),
         collections.attendance.createIndex({ id: 1 }, { unique: true }),
         collections.attendance.createIndex({ registration_id: 1, time_in: -1 }),
+        collections.registrations.createIndex({ pass_id: 1 }, { unique: true, sparse: true }),
+        collections.councilMemberCredentials.createIndex({ user_id: 1 }, { unique: true }),
+        collections.councilMemberCredentials.createIndex({ pass_id: 1 }, { unique: true, sparse: true }),
+        collections.attendance.createIndex({ participant_key: 1 }, { unique: true, sparse: true }),
+        collections.attendance.createIndex({ event_id: 1, participant_type: 1, time_in: -1 }),
+        collections.attendanceAudit.createIndex({ id: 1 }, { unique: true }),
+        collections.attendanceAudit.createIndex({ event_id: 1, created_at: -1 }),
+        collections.attendanceAudit.createIndex({ operator_user_id: 1, created_at: -1 }),
         collections.event_highlights.createIndex({ id: 1 }, { unique: true }),
         collections.event_highlights.createIndex({ event_id: 1, created_at: -1 }),
         collections.event_schedules.createIndex({ id: 1 }, { unique: true }),
@@ -2512,6 +3288,14 @@ async function connectDatabase() {
         collections.eventAssignments.createIndex({ id: 1 }, { unique: true }),
         collections.eventAssignments.createIndex({ user_id: 1, event_id: 1 }, { unique: true }),
         collections.eventAssignments.createIndex({ event_id: 1, status: 1 }),
+        collections.eventResponses.createIndex({ id: 1 }, { unique: true }),
+        collections.eventResponses.createIndex({ event_id: 1, user_id: 1 }, { unique: true }),
+        collections.eventResponses.createIndex({ user_id: 1, created_at: -1 }),
+        collections.eventResponses.createIndex({ event_id: 1, status: 1 }),
+        collections.studentEventParticipations.createIndex({ id: 1 }, { unique: true }),
+        collections.studentEventParticipations.createIndex({ event_id: 1, user_id: 1 }, { unique: true }),
+        collections.studentEventParticipations.createIndex({ user_id: 1, updated_at: -1 }),
+        collections.councilClassSchedules.createIndex({ user_id: 1, academic_period: 1 }, { unique: true }),
         collections.committeeWorkItems.createIndex({ id: 1 }, { unique: true }),
         collections.committeeWorkItems.createIndex({ committee: 1, status: 1, due_at: 1 }),
         collections.committeeWorkItems.createIndex({ committee: 1, kind: 1, assignee_user_id: 1, due_at: 1 }),
@@ -2534,7 +3318,8 @@ async function connectDatabase() {
         collections.councilInventory.createIndex({ condition: 1, item_name: 1 }),
         collections.passwordResetOtps.createIndex({ email: 1 }, { unique: true }),
         collections.passwordResetOtps.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
-        collections.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 })
+        collections.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+        collections.rateLimits.createIndex({ resetAt: 1 }, { expireAfterSeconds: 0 })
     ]);
     sessionStore.collection = collections.sessions;
     databaseReady = true;
@@ -2582,7 +3367,7 @@ async function connectWithRetry() {
             databaseReady = false;
             attempt += 1;
             const delayMs = Math.min(30_000, 1_000 * (2 ** Math.min(attempt - 1, 5)));
-            console.error(`MongoDB connection attempt ${attempt} failed: ${error.message}`);
+            console.error(`MongoDB connection attempt ${attempt} failed (${error.name || "Error"}, ${mongoFailureCode(error)}).`);
             await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
     }
@@ -2591,7 +3376,7 @@ async function connectWithRetry() {
 const isDirectExecution = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isDirectExecution) {
     start().catch((error) => {
-        console.error("The API could not start:", error.message);
+        console.error("The API could not start:", error.name || "Error", error.code || "");
         process.exitCode = 1;
     });
 }

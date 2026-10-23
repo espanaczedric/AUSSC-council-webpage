@@ -7,9 +7,9 @@
     "node": "22.x"
   },
   "scripts": {
-    "dev": "node src/server.js",
+    "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/publicationWorkflow.js && node --check scripts/create-admin.js",
+    "check": "node --check src/server.js && node --check src/publicationWorkflow.js && node --check src/attendanceWorkflow.js && node --check scripts/create-admin.js",
     "create:admin": "node scripts/create-admin.js",
     "test": "node --test"
   },

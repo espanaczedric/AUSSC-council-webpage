@@ -6,10 +6,18 @@ import EventImage from "../../components/EventImage";
 import { AdminPageSkeleton, SkeletonBlock, SkeletonPageHeading } from "../../components/LoadingSkeletons";
 import {
     createAdminEvent,
-    getEvent,
+    getAdminEvent,
     getEventImageUrl,
     updateAdminEvent
 } from "../../services/api";
+
+const councilInviteAudiences = [
+    ["all", "All council members"],
+    ["executive", "Executive Committee"],
+    ["publication", "Publication Committee"],
+    ["program", "Program Committee"],
+    ["production", "Production Committee"]
+];
 
 function toDateTimeLocal(value) {
     return value ? value.replace(" ", "T").slice(0, 16) : "";
@@ -22,6 +30,7 @@ function CreateEvent({ editMode = false }) {
         title: "",
         description: "",
         location: "",
+        invited_committees: ["all"],
         start_date: "",
         end_date: "",
         registration_deadline: "",
@@ -32,7 +41,12 @@ function CreateEvent({ editMode = false }) {
         eligible_courses: "",
         eligible_year_levels: "",
         require_event_registration: false,
-        publication_status: "draft",
+        registration_open: true,
+        registration_eligible_courses: "",
+        registration_eligible_year_levels: "",
+        self_service_checkin: false,
+        self_service_checkout: false,
+        publication_status: "published",
         status: "upcoming"
     });
     const [coverImage, setCoverImage] = useState(null);
@@ -47,7 +61,7 @@ function CreateEvent({ editMode = false }) {
         if (!editMode) return undefined;
 
         let active = true;
-        getEvent(id)
+        getAdminEvent(id)
             .then((data) => {
                 if (!data.success || !data.event) {
                     throw new Error(data.message || "Event not found.");
@@ -59,6 +73,7 @@ function CreateEvent({ editMode = false }) {
                     title: event.title || "",
                     description: event.description || "",
                     location: event.location || "",
+                    invited_committees: Array.isArray(event.invited_committees) ? event.invited_committees : ["all"],
                     start_date: toDateTimeLocal(event.start_date),
                     end_date: toDateTimeLocal(event.end_date),
                     registration_deadline: toDateTimeLocal(event.registration_deadline),
@@ -69,6 +84,11 @@ function CreateEvent({ editMode = false }) {
                     eligible_courses: (event.eligible_courses || []).join(", "),
                     eligible_year_levels: (event.eligible_year_levels || []).join(", "),
                     require_event_registration: Boolean(event.require_event_registration),
+                    registration_open: event.registration_open !== false,
+                    registration_eligible_courses: (event.registration_eligible_courses || []).join(", "),
+                    registration_eligible_year_levels: (event.registration_eligible_year_levels || []).join(", "),
+                    self_service_checkin: Boolean(event.self_service_checkin),
+                    self_service_checkout: Boolean(event.self_service_checkout),
                     publication_status: event.publication_status || "published",
                     status: event.status || "upcoming"
                 });
@@ -102,6 +122,16 @@ function CreateEvent({ editMode = false }) {
         setForm((current) => ({ ...current, [name]: value }));
     };
 
+    const toggleInviteAudience = (audience, checked) => {
+        setForm((current) => {
+            const selected = current.invited_committees || [];
+            if (audience === "all") return { ...current, invited_committees: checked ? ["all"] : [] };
+            const next = selected.filter((item) => item !== "all" && item !== audience);
+            if (checked) next.push(audience);
+            return { ...current, invited_committees: next };
+        });
+    };
+
     const handleImageChange = (event) => {
         const file = event.target.files?.[0] || null;
         setError("");
@@ -123,14 +153,19 @@ function CreateEvent({ editMode = false }) {
 
         try {
             const formData = new FormData(event.currentTarget);
+            formData.set("invited_committees", (form.invited_committees || []).join(","));
             formData.set("participation_open", form.participation_open ? "true" : "false");
             formData.set("require_event_registration", form.require_event_registration ? "true" : "false");
+            formData.set("registration_open", form.registration_open ? "true" : "false");
+            formData.set("self_service_checkin", form.self_service_checkin ? "true" : "false");
+            formData.set("self_service_checkout", form.self_service_checkout ? "true" : "false");
+            let result;
             if (editMode) {
-                await updateAdminEvent(id, formData);
+                result = await updateAdminEvent(id, formData);
             } else {
-                await createAdminEvent(formData);
+                result = await createAdminEvent(formData);
             }
-            navigate("/admin/events");
+            navigate("/admin/events", { state: { eventNotice: result.message, eventNoticeFailed: result.notifications?.failed_count !== undefined && result.notifications.failed_count !== 0, eventNoticeEmpty: result.notifications?.recipient_count === 0 } });
         } catch (requestError) {
             setError(requestError.message || "The event could not be saved. Please try again.");
         } finally {
@@ -178,8 +213,8 @@ function CreateEvent({ editMode = false }) {
                         <span>EVENT OPERATIONS</span>
                         <h1>{editMode ? "Edit event" : "Create event"}</h1>
                         <p>{editMode
-                            ? "Update the information students use to plan and register."
-                            : "Publish the details students need to decide and register."}</p>
+                            ? "Update the details council members and attendees use to plan."
+                            : "Create an event and invite current council members to share their availability."}</p>
                     </div>
                     <Link to="/admin/events" className="admin-secondary-action">
                         <span aria-hidden="true">←</span>
@@ -191,11 +226,18 @@ function CreateEvent({ editMode = false }) {
 
                 <div className="admin-create-layout">
                     <form className="admin-form admin-create-form" onSubmit={handleSubmit}>
+                        <input type="hidden" name="assignment_capacity" value={form.assignment_capacity} />
+                        <input type="hidden" name="participation_requirements" value={form.participation_requirements} />
+                        <input type="hidden" name="eligible_courses" value={form.eligible_courses} />
+                        <input type="hidden" name="eligible_year_levels" value={form.eligible_year_levels} />
+                        <input type="hidden" name="registration_open" value={form.registration_open ? "true" : "false"} />
+                        <input type="hidden" name="registration_eligible_courses" value={form.registration_eligible_courses} />
+                        <input type="hidden" name="registration_eligible_year_levels" value={form.registration_eligible_year_levels} />
                         <section className="admin-form-section">
                             <div className="admin-section-heading">
                                 <div>
                                     <span>01 · EVENT DETAILS</span>
-                                    <h2>What are students joining?</h2>
+                                    <h2>What is happening?</h2>
                                 </div>
                             </div>
 
@@ -263,15 +305,6 @@ function CreateEvent({ editMode = false }) {
                                     required
                                 />
 
-                                <label htmlFor="event-deadline">Registration closes <span>Optional</span></label>
-                                <input
-                                    id="event-deadline"
-                                    type="datetime-local"
-                                    name="registration_deadline"
-                                    value={form.registration_deadline}
-                                    onChange={handleChange}
-                                />
-
                                 <label htmlFor="event-capacity">Capacity</label>
                                 <input
                                     id="event-capacity"
@@ -301,40 +334,46 @@ function CreateEvent({ editMode = false }) {
                         </section>
 
                         <section className="admin-form-section">
-                            <div className="admin-section-heading"><div><span>03 · COUNCIL PARTICIPATION</span><h2>Manage event assignment sign-ups</h2></div></div>
-                            <div className="admin-form-grid">
-                                <label htmlFor="assignment-capacity">Assignment positions <span>0 means unlimited</span></label>
-                                <input id="assignment-capacity" type="number" min="0" max="10000" name="assignment_capacity" value={form.assignment_capacity} onChange={handleChange} placeholder="0" />
-                                <label htmlFor="eligible-courses">Eligible courses <span>Comma-separated; blank means all courses</span></label>
-                                <input id="eligible-courses" name="eligible_courses" value={form.eligible_courses} onChange={handleChange} placeholder="BSIT, BSBA" />
-                                <label htmlFor="eligible-years">Eligible year levels <span>Comma-separated; blank means all years</span></label>
-                                <input id="eligible-years" name="eligible_year_levels" value={form.eligible_year_levels} onChange={handleChange} placeholder="1st Year, 2nd Year" />
+                            <div className="admin-section-heading"><div><span>03 · COUNCIL INVITATIONS</span><h2>Invite council participation</h2></div></div>
+                            <p className="admin-form-note">Choose who should receive this event invitation. Selected members receive the event details and can accept or decline. Participation helps with planning but does not create assignments or attendance records.</p>
+                            <div className="event-invite-audiences" role="group" aria-label="Council invitation audience">
+                                {councilInviteAudiences.map(([audience, label]) => <label key={audience} className={(form.invited_committees || []).includes(audience) ? "is-selected" : ""}>
+                                    <input type="checkbox" checked={(form.invited_committees || []).includes(audience)} onChange={(change) => toggleInviteAudience(audience, change.target.checked)} />
+                                    <span>{label}</span>
+                                </label>)}
                             </div>
-                            <label htmlFor="participation-requirements">Participation requirements</label>
-                            <textarea id="participation-requirements" name="participation_requirements" rows={3} maxLength={1000} value={form.participation_requirements} onChange={handleChange} placeholder="Describe the responsibilities and expectations for members." />
-                            <div className="event-participation-toggles">
-                                <label><input type="checkbox" checked={form.participation_open} onChange={(event) => setForm((current) => ({ ...current, participation_open: event.target.checked }))} /> Allow member assignment sign-ups</label>
-                                <label><input type="checkbox" checked={form.require_event_registration} onChange={(event) => setForm((current) => ({ ...current, require_event_registration: event.target.checked }))} /> Require event registration before assignment sign-up</label>
-                            </div>
+                            {!(form.invited_committees || []).length && <p className="admin-feedback is-error" role="alert">Select at least one group to notify.</p>}
                         </section>
 
                         <section className="admin-form-section">
-                            <div className="admin-section-heading"><div><span>04 · PUBLICATION REVIEW</span><h2>Set the event’s release status</h2></div></div>
+                            <div className="admin-section-heading"><div><span>04 · ATTENDANCE</span><h2>Configure event check-in</h2></div></div>
+                            <div className="event-participation-toggles">
+                                <label><input type="checkbox" checked={form.self_service_checkin} onChange={(event) => setForm((current) => ({ ...current, self_service_checkin: event.target.checked }))} /> Allow attendees to check in themselves</label>
+                                <label><input type="checkbox" checked={form.self_service_checkout} onChange={(event) => setForm((current) => ({ ...current, self_service_checkout: event.target.checked }))} /> Allow attendees to check out themselves</label>
+                            </div>
+                            <p className="admin-form-note">Attendance is recorded only when a student or council member checks in to this selected event. Participation does not count as attendance.</p>
+                        </section>
+
+                        {editMode ? <section className="admin-form-section">
+                            <div className="admin-section-heading"><div><span>05 · PUBLICATION</span><h2>Manage the event’s release status</h2></div></div>
                             <label htmlFor="event-publication-status">Publication status</label>
                             <select id="event-publication-status" name="publication_status" value={form.publication_status} onChange={handleChange}>
                                 <option value="draft">Draft · private to council</option>
-                                <option value="pending_approval">Pending approval · send to executive queue</option>
-                                {editMode && <option value="published">Published</option>}
-                                {editMode && <option value="cancelled">Cancelled</option>}
-                                {editMode && <option value="archived">Archived</option>}
+                                <option value="pending_approval">Pending approval · executive queue</option>
+                                <option value="published">Published</option>
+                                <option value="cancelled">Cancelled</option>
+                                <option value="archived">Archived</option>
                             </select>
-                            {form.publication_status === "pending_approval" && <p className="event-review-note">Students will not see this event until an executive member approves it.</p>}
-                        </section>
+                            {form.publication_status === "pending_approval" && <p className="event-review-note">This existing event stays off the public site until it is approved.</p>}
+                        </section> : <section className="admin-form-section">
+                            <div className="admin-section-heading"><div><span>05 · PUBLICATION</span><h2>Publish when you post</h2></div></div>
+                            <p className="admin-form-note">Saving publishes this event immediately and sends its details to the selected council audience.</p>
+                        </section>}
 
                         <section className="admin-form-section">
                             <div className="admin-section-heading">
                                 <div>
-                                    <span>05 · COVER IMAGE</span>
+                                    <span>06 · COVER IMAGE</span>
                                     <h2>Choose the event thumbnail</h2>
                                 </div>
                             </div>
@@ -358,7 +397,7 @@ function CreateEvent({ editMode = false }) {
                             <button className="admin-primary-action" type="submit" disabled={saving}>
                                 {saving
                                     ? editMode ? "Saving…" : "Publishing…"
-                                : editMode ? "Save changes" : form.publication_status === "pending_approval" ? "Submit for approval" : "Save draft"}
+                                    : editMode ? "Save changes" : "Publish event"}
                             </button>
                         </div>
                     </form>

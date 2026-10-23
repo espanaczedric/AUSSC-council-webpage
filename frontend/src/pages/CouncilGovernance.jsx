@@ -334,8 +334,8 @@ export default function CouncilGovernance() {
                 {!canManageInventory && <p className="council-rule-note">The Auditor and Governor can update property records. Council members may view the register.</p>}
             </section>}
 
-            <footer className="council-governance-links"><strong>Related council functions</strong>{isAdmin && <Link to="/admin/users">People & council appointments</Link>}{isCouncilMember && <Link to="/admin/committees/executive">Committee workspaces</Link>}{(isAdmin || ["governor", "treasurer", "auditor"].includes(member.council_position)) && <Link to="/admin/finance">Budgets & financial records</Link>}{isCouncilMember && <Link to="/admin/events">University events</Link>}{(isAdmin || ["governor", "vice_governor", "secretary", "social_media_manager"].includes(member.council_position)) && <Link to="/admin/attendance">Event registration attendance</Link>}</footer>
-            {!isCouncilMember && isAdmin && <p className="council-rule-note">Assign elected positions in the People directory to enable member QR passes. Administrators can manage records, but only appointed voting officers are issued attendance credentials.</p>}
+            <footer className="council-governance-links"><strong>Related council functions</strong>{isAdmin && <Link to="/admin/users">People & council appointments</Link>}{isCouncilMember && <Link to="/admin/committees/executive">Committee workspaces</Link>}{(isAdmin || ["governor", "treasurer", "auditor"].includes(member.council_position)) && <Link to="/admin/finance">Budgets & financial records</Link>}{isCouncilMember && <Link to="/admin/events">University events</Link>}{(isAdmin || ["governor", "vice_governor", "secretary", "social_media_manager"].includes(member.council_position)) && <Link to="/admin/attendance">Event attendance</Link>}</footer>
+            {!isCouncilMember && isAdmin && <p className="council-rule-note">Assign elected positions in the People directory to enable council participation and governance access. Administrators can manage records, while appointed voting officers receive meeting attendance credentials.</p>}
         </main>
     </>;
 }

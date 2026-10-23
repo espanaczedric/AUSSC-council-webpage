@@ -105,7 +105,7 @@ function Navbar() {
         : user?.committee_assignment
             ? { to: getCommitteeWorkspacePath(user), label: `${committeeLabels[user.committee_assignment]?.replace(" Committee", "") || "Committee"} workspace` }
             : user
-                ? { to: "/my-events", label: "My registrations" }
+                ? { to: "/my-events", label: "My activity" }
                 : null;
 
     useEffect(() => {
@@ -526,7 +526,7 @@ function Navbar() {
 
                                 </> : <div className="navbar-account-guest">
                                     <strong>Welcome</strong>
-                                    <span>Sign in to manage your registrations.</span>
+                                    <span>Sign in to view your campus activity.</span>
                                     <Link className="navbar-dropdown-item" to="/login" onClick={() => { setDropdownOpen(false); setMenuOpen(false); }}>Sign in</Link>
                                     <Link className="navbar-dropdown-item" to="/register-account" onClick={() => { setDropdownOpen(false); setMenuOpen(false); }}>Create an account</Link>
                                 </div>}

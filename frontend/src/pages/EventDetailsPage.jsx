@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import QRCode from "react-qr-code";
 import {
     Link,
     useParams
@@ -7,17 +8,37 @@ import {
 import Navbar from "../components/Navbar";
 import EventImage from "../components/EventImage";
 import { PublicPageSkeleton, SkeletonBlock } from "../components/LoadingSkeletons";
-import { getEvent, getEventHighlights, getEventImageUrl } from "../services/api";
+import { getEvent, getEventHighlights, getEventImageUrl, getStudentEventQr, respondToEvent, respondToStudentEventParticipation } from "../services/api";
 
 function EventDetailsPage() {
 
     const { id } = useParams();
 
     const [event, setEvent] = useState(null);
+    const [councilResponse, setCouncilResponse] = useState(null);
     const [highlights, setHighlights] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [responseBusy, setResponseBusy] = useState(false);
+    const [responseMessage, setResponseMessage] = useState("");
+    const [studentQrValue, setStudentQrValue] = useState("");
+    const [studentQrEventId, setStudentQrEventId] = useState(null);
+    const [studentQrBusy, setStudentQrBusy] = useState(false);
+    const [studentQrMessage, setStudentQrMessage] = useState("");
+    const [studentParticipation, setStudentParticipation] = useState(null);
+    const [studentParticipationBusy, setStudentParticipationBusy] = useState(false);
+    const [studentParticipationMessage, setStudentParticipationMessage] = useState("");
 
     useEffect(() => {
+        let active = true;
+        setLoading(true);
+        setEvent(null);
+        setCouncilResponse(null);
+        setHighlights([]);
+        setStudentQrValue("");
+        setStudentQrEventId(null);
+        setStudentQrMessage("");
+        setStudentParticipation(null);
+        setStudentParticipationMessage("");
 
         async function loadEvent() {
 
@@ -25,33 +46,89 @@ function EventDetailsPage() {
 
                 const data = await getEvent(id);
 
-                if (data.success) {
-                    setEvent(data.event);
+                if (active && data.success) {
+                    setEvent({
+                        ...data.event,
+                        council_can_respond: Boolean(data.council_can_respond),
+                        student_can_participate: Boolean(data.student_can_participate),
+                        student_needs_sign_in: Boolean(data.student_needs_sign_in),
+                        student_participation: data.student_participation || null,
+                        student_can_generate_qr: Boolean(data.student_can_generate_qr)
+                    });
+                    setCouncilResponse(data.council_response || null);
+                    setStudentParticipation(data.student_participation || null);
                     try {
                         const highlightData = await getEventHighlights(id);
-                        setHighlights(highlightData.highlights || []);
+                        if (active) setHighlights(highlightData.highlights || []);
                     } catch (highlightError) {
-                        console.error("Failed to load event highlights:", highlightError);
+                        if (active) console.error("Failed to load event highlights:", highlightError);
                     }
                 }
 
             } catch (error) {
 
-                console.error(
-                    "Failed to load event:",
-                    error
-                );
+                if (active) console.error("Failed to load event:", error);
 
             } finally {
 
-                setLoading(false);
+                if (active) setLoading(false);
 
             }
         }
 
         loadEvent();
 
+        return () => { active = false; };
     }, [id]);
+
+    async function saveResponse(status) {
+        setResponseBusy(true);
+        setResponseMessage("");
+        try {
+            const data = await respondToEvent(event.id, status);
+            setCouncilResponse(data.response || { status, responded_at: new Date().toISOString() });
+            setResponseMessage(data.message || "Your participation choice was saved.");
+        } catch (error) {
+            setResponseMessage(error.message || "Your participation could not be saved.");
+        } finally {
+            setResponseBusy(false);
+        }
+    }
+
+    async function generateStudentQr() {
+        if (!event?.id) return;
+        setStudentQrBusy(true);
+        setStudentQrMessage("");
+        try {
+            const data = await getStudentEventQr(event.id);
+            setStudentQrValue(data.qr_value || "");
+            setStudentQrEventId(data.event?.id ?? event.id);
+            setStudentQrMessage(data.message || "Your QR is ready for this event.");
+        } catch (error) {
+            setStudentQrMessage(error.message || "An event QR could not be generated.");
+        } finally {
+            setStudentQrBusy(false);
+        }
+    }
+
+    async function updateStudentParticipation(status) {
+        if (!event?.id) return;
+        setStudentParticipationBusy(true);
+        setStudentParticipationMessage("");
+        setStudentQrValue("");
+        setStudentQrEventId(null);
+        setStudentQrMessage("");
+        try {
+            const data = await respondToStudentEventParticipation(event.id, status);
+            setStudentParticipation(data.participation || { status });
+            setEvent((current) => ({ ...current, student_can_generate_qr: Boolean(data.participation?.can_generate_qr) }));
+            setStudentParticipationMessage(data.message || "Your participation was updated.");
+        } catch (error) {
+            setStudentParticipationMessage(error.message || "Your participation could not be updated.");
+        } finally {
+            setStudentParticipationBusy(false);
+        }
+    }
 
 
     if (loading) return <PublicPageSkeleton className="event-details-page event-details-loading-skeleton">
@@ -88,6 +165,7 @@ function EventDetailsPage() {
 
     const endDate =
         new Date(event.end_date);
+    const responseStatus = councilResponse?.status || "pending";
 
 
     return (
@@ -137,18 +215,39 @@ function EventDetailsPage() {
 
                         <div className="event-actions">
 
-                            {(event.display_status || event.status) !== "completed" &&
-                             (event.display_status || event.status) !== "cancelled" &&
-                             event.status !== "cancelled" && (
+                            {event.council_can_respond && event.status !== "cancelled" && event.publication_status !== "archived" && <section className="event-council-response" aria-label="Council event participation">
+                                <span className="eyebrow">COUNCIL PARTICIPATION</span>
+                                <h3>Your participation: <span className={`admin-status is-${responseStatus}`}>{responseStatus}</span></h3>
+                                <p>This records your intent to help with this event. It is separate from task assignments and attendance.</p>
+                                <div className="event-council-response-actions">
+                                    <button className="admin-primary-action" type="button" onClick={() => saveResponse("accepted")} disabled={responseBusy || responseStatus === "accepted"}>{responseBusy && responseStatus !== "accepted" ? "Saving…" : responseStatus === "accepted" ? "Accepted" : "Accept participation"}</button>
+                                    <button className="admin-secondary-action" type="button" onClick={() => saveResponse("declined")} disabled={responseBusy || responseStatus === "declined"}>{responseBusy && responseStatus !== "declined" ? "Saving…" : responseStatus === "declined" ? "Declined" : "Decline"}</button>
+                                </div>
+                                {councilResponse?.responded_at && <small>Responded {new Date(String(councilResponse.responded_at).replace(" ", "T")).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}</small>}
+                                {responseMessage && <p role="status">{responseMessage}</p>}
+                            </section>}
 
-                                <Link
-                                    to={`/register/${event.id}`}
-                                    className="register-button"
-                                >
-                                    Register Now
-                                </Link>
+                            {event.student_needs_sign_in && <section className="event-student-qr" aria-label="Student event participation">
+                                <span className="eyebrow">STUDENT PARTICIPATION</span>
+                                <h3>Sign in to participate</h3>
+                                <p>Sign in to agree to participate in this event. Your event QR becomes available here after you agree.</p>
+                                <Link className="admin-primary-action" to={`/login?next=${encodeURIComponent(`/events/${event.id}`)}`}>Sign in to participate</Link>
+                            </section>}
 
-                            )}
+                            {event.student_can_participate && <section className="event-student-qr" aria-label="Student event participation and attendance QR">
+                                <span className="eyebrow">STUDENT PARTICIPATION</span>
+                                <h3>{studentParticipation?.status === "accepted" ? "You’re participating" : studentParticipation?.status === "withdrawn" ? "Participation withdrawn" : "Will you participate?"}</h3>
+                                <p>Agree to participate to unlock an event-specific QR. It contains this event’s title and description. Attendance is recorded only when the QR is scanned at check-in.</p>
+                                <div className="event-council-response-actions">
+                                    {studentParticipation?.status !== "accepted" ? <button className="admin-primary-action" type="button" onClick={() => updateStudentParticipation("accepted")} disabled={studentParticipationBusy}>{studentParticipationBusy ? "Saving…" : "Agree to participate"}</button> : <button className="admin-secondary-action" type="button" onClick={() => updateStudentParticipation("withdrawn")} disabled={studentParticipationBusy}>{studentParticipationBusy ? "Saving…" : "Withdraw participation"}</button>}
+                                    {studentParticipation?.status === "accepted" && event.student_can_generate_qr && <button className="admin-primary-action" type="button" onClick={generateStudentQr} disabled={studentQrBusy}>{studentQrBusy ? "Preparing QR…" : studentQrValue && studentQrEventId === event.id ? "Refresh event QR" : "Generate event QR"}</button>}
+                                </div>
+                                {studentParticipation?.agreed_at && studentParticipation.status === "accepted" && <small>Agreed {new Date(String(studentParticipation.agreed_at).replace(" ", "T")).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}</small>}
+                                {studentParticipation?.status === "accepted" && !event.student_can_generate_qr && <p className="event-student-qr-message" role="status">Add a valid student ID to your profile before generating this QR.</p>}
+                                {studentQrValue && studentQrEventId === event.id && <div className="event-student-qr-code"><QRCode value={studentQrValue} size={220} level="M" /><span>{event.title}</span></div>}
+                                {studentParticipationMessage && <p className="event-student-qr-message" role="status">{studentParticipationMessage}</p>}
+                                {studentQrMessage && <p className="event-student-qr-message" role="status">{studentQrMessage}</p>}
+                            </section>}
 
                         </div>
 

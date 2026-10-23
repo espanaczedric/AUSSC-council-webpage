@@ -4,7 +4,7 @@ import { useParams } from "react-router-dom";
 import AdminNav from "../../components/AdminNav";
 import CommitteeWorkspaceTabs from "../../components/CommitteeWorkspaceTabs";
 import { AdminPageSkeleton, SkeletonBlock, SkeletonRows } from "../../components/LoadingSkeletons";
-import { deleteCommitteeWork, getCommitteeWork, reviewAdminEvent, reviewEventAssignment, saveCommitteeWork, updateCommitteeChecklist } from "../../services/api";
+import { deleteCommitteeWork, getCommitteeWork, reviewAdminEvent, saveCommitteeWork, updateCommitteeChecklist } from "../../services/api";
 import { hasExecutiveAccess } from "../../utils/workspaceAccess";
 
 const workspaces = {
@@ -16,7 +16,7 @@ const workspaces = {
 
 const publicationStatuses = ["Request Submitted", "Requirements Review", "Assigned", "In Design", "Internal Review", "Revisions Requested", "Awaiting Approval", "Approved", "Scheduled", "Published", "Archived"];
 const taskStatuses = ["Not Started", "In Progress", "Blocked", "Complete"];
-const emptyForm = { id: "", kind: "task", title: "", details: "", event_id: "", assignee_user_id: "", due_at: "", priority: "normal", status: "Not Started", attachment_url: "", time_slot: "", duration_minutes: "", checklist_text: "" };
+const emptyForm = { id: "", kind: "task", title: "", details: "", event_id: "", assignee_user_id: "", due_at: "", priority: "normal", status: "Not Started", attachment_url: "", time_slot: "", duration_minutes: "", checklist_text: "", confirm_class_conflict: false };
 
 function dateLabel(value) {
     if (!value) return "No deadline";
@@ -74,11 +74,6 @@ export default function CommitteeWorkspace() {
         catch (requestError) { setError(requestError.message); }
     }
 
-    async function decideAssignment(assignment, status) {
-        try { await reviewEventAssignment(assignment.id, status); setNotice(status === "approved" ? "Member assignment approved." : "Member assignment declined."); await load(); }
-        catch (requestError) { setError(requestError.message); }
-    }
-
     async function decideEvent(event, decision) {
         try { await reviewAdminEvent(event.id, decision); setNotice(decision === "approve" ? "Event approved and published." : "Event returned to draft."); await load(); }
         catch (requestError) { setError(requestError.message); }
@@ -86,6 +81,12 @@ export default function CommitteeWorkspace() {
 
     const allowedKinds = workspace.kinds;
     const statuses = form.kind === "pubmat" ? publicationStatuses : taskStatuses;
+    const eventAvailability = form.event_id ? data.availability?.filter((item) => String(item.event_id) === String(form.event_id)) || [] : [];
+    const availableUserIds = new Set(eventAvailability.map((item) => Number(item.user_id)));
+    const assignableUsers = form.event_id
+        ? data.users.filter((user) => availableUserIds.has(Number(user.id)) || Number(user.id) === Number(form.assignee_user_id))
+        : data.users;
+    const selectedAvailability = eventAvailability.find((item) => Number(item.user_id) === Number(form.assignee_user_id));
     const columns = (committee === "publication" ? publicationStatuses : taskStatuses).filter((status) => items.some((item) => item.status === status));
     const overview = data.overview || {};
     const focusMetrics = committee === "executive" ? [
@@ -93,7 +94,7 @@ export default function CommitteeWorkspace() {
         ["Approval queue", `${overview.pending_approval_count || 0} pending`],
         ["Committee progress", `${items.filter((item) => item.status === "Complete" || item.status === "Approved").length} complete · ${items.length} items`],
         ["Approved budget / expenses", `${new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 0 }).format(overview.approved_allocation_total || 0)} / ${new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 0 }).format(overview.recorded_expense_total || 0)}`],
-        ["Attendance recorded", `${overview.attendance_count || 0} check-ins · ${overview.registration_count || 0} registrations`]
+        ["Participation", `${overview.pending_response_count || 0} pending`]
     ] : workspace.focus.map((label, index) => [label, index === 0 ? `${items.filter((item) => !["Complete", "Published", "Archived"].includes(item.status)).length} active items` : index === 1 ? `${overdue} overdue` : `${items.length} total records`]);
 
     if (loading) return <AdminPageSkeleton className="committee-workspace-page">
@@ -108,7 +109,7 @@ export default function CommitteeWorkspace() {
             {focusMetrics.map(([label, value], index) => <article key={label}><span>0{index + 1}</span><strong>{label}</strong><small>{value}</small></article>)}
         </section>
 
-        {committee === "executive" && (data.event_queue?.length > 0 || data.assignment_queue?.length > 0) && <section className="committee-approval-queue"><div className="admin-section-heading"><div><span>COUNCIL REVIEW</span><h2>Approval queues</h2></div><span>{(data.assignment_queue?.length || 0) + (data.event_queue?.length || 0)} pending</span></div>{data.event_queue?.map((event) => <article key={`event-${event.id}`}><div><strong>{event.title}</strong><span>Event publication · {event.location}</span><p>{dateLabel(event.start_date)} · {event.description}</p></div><div><button type="button" onClick={() => decideEvent(event, "approve")}>Publish</button><button type="button" onClick={() => decideEvent(event, "return")}>Return to draft</button></div></article>)}{data.assignment_queue?.map((assignment) => <article key={`assignment-${assignment.id}`}><div><strong>{assignment.member.first_name} {assignment.member.last_name}</strong><span>{assignment.member.student_id} · {assignment.member.email}</span><p>{assignment.event.title} · {dateLabel(assignment.event.start_date)}</p></div><div><button type="button" onClick={() => decideAssignment(assignment, "approved")}>Approve</button><button type="button" onClick={() => decideAssignment(assignment, "rejected")}>Decline</button></div></article>)}</section>}
+        {committee === "executive" && data.event_queue?.length > 0 && <section className="committee-approval-queue"><div className="admin-section-heading"><div><span>COUNCIL REVIEW</span><h2>Event publication queue</h2></div><span>{data.event_queue.length} pending</span></div>{data.event_queue.map((event) => <article key={`event-${event.id}`}><div><strong>{event.title}</strong><span>Event publication · {event.location}</span><p>{dateLabel(event.start_date)} · {event.description}</p></div><div><button type="button" onClick={() => decideEvent(event, "approve")}>Publish</button><button type="button" onClick={() => decideEvent(event, "return")}>Return to draft</button></div></article>)}</section>}
 
         {committee === "executive" && items.length > 0 && <section className="committee-recent-activity"><div><span>COUNCIL-WIDE</span><h2>Recent activity</h2></div>{[...items].sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at)).slice(0, 5).map((item) => <article key={item.id}><div><strong>{item.title}</strong><span>{item.event_title} · {item.committee}</span></div><div><span>{item.status}</span><small>{dateLabel(item.updated_at || item.created_at)}</small></div></article>)}</section>}
 
@@ -117,8 +118,23 @@ export default function CommitteeWorkspace() {
             <form onSubmit={submit} className="committee-work-form">
                 <label>Work type<select disabled={Boolean(form.id)} value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value, status: event.target.value === "pubmat" ? "Request Submitted" : "Not Started" })}>{allowedKinds.map((kind) => <option key={kind} value={kind}>{kind === "pubmat" ? "Pubmat" : kind[0].toUpperCase() + kind.slice(1)}</option>)}</select></label>
                 <label>Title<input required maxLength="180" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder={committee === "program" ? "Opening remarks" : "Add a clear work item"} /></label>
-                <label>Event<select value={form.event_id} onChange={(event) => setForm({ ...form, event_id: event.target.value })}><option value="">Council-wide / not linked</option>{data.events.map((event) => <option key={event.id} value={event.id}>{event.title}</option>)}</select></label>
-                <label>Assigned to<select value={form.assignee_user_id} onChange={(event) => setForm({ ...form, assignee_user_id: event.target.value })}><option value="">Unassigned</option>{data.users.map((user) => <option key={user.id} value={user.id}>{user.first_name} {user.last_name} · {user.email}</option>)}</select></label>
+                <label>Event<select value={form.event_id} onChange={(event) => setForm({ ...form, event_id: event.target.value, assignee_user_id: "", confirm_class_conflict: false })}><option value="">Council-wide / not linked</option>{data.events.map((event) => <option key={event.id} value={event.id}>{event.title}</option>)}</select></label>
+                <label>Assigned to<select value={form.assignee_user_id} onChange={(event) => setForm({ ...form, assignee_user_id: event.target.value, confirm_class_conflict: false })}><option value="">Unassigned</option>{assignableUsers.map((user) => {
+                    const availability = eventAvailability.find((item) => Number(item.user_id) === Number(user.id));
+                    const responseStatus = availability?.response_status || "pending";
+                    const responseLabel = responseStatus[0].toUpperCase() + responseStatus.slice(1);
+                    const blocked = responseStatus !== "accepted" && Number(user.id) !== Number(form.assignee_user_id);
+                    return <option key={user.id} value={user.id} disabled={blocked}>{user.first_name} {user.last_name} · {responseLabel}{responseStatus === "accepted" && availability?.class_conflict ? " · Class conflict" : ""}</option>;
+                })}</select></label>
+                {form.event_id && form.assignee_user_id && <div className={`committee-class-conflict-note${selectedAvailability?.class_conflict ? " is-conflict" : ""}`} role="status">
+                    {selectedAvailability?.response_status !== "accepted"
+                        ? `This member’s response is ${selectedAvailability?.response_status || "pending"}; only accepted members can be assigned event work.`
+                        : selectedAvailability?.class_conflict
+                            ? <><span>Class schedule conflict: this member has a class during the event. Confirm their availability before assigning this work.</span><label><input type="checkbox" checked={Boolean(form.confirm_class_conflict)} onChange={(change) => setForm({ ...form, confirm_class_conflict: change.target.checked })} /> I confirmed this assignment with the member.</label></>
+                            : selectedAvailability?.has_schedule
+                                ? "No class overlap appears during the event. Confirm availability with the member before assigning."
+                                : "No class schedule is saved for this term. Confirm availability with the member before assigning."}
+                </div>}
                 <label>Deadline<input type="datetime-local" value={form.due_at} onChange={(event) => setForm({ ...form, due_at: event.target.value })} /></label>
                 <label>Priority<select value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })}>{["low", "normal", "high", "urgent"].map((value) => <option key={value} value={value}>{value[0].toUpperCase() + value.slice(1)}</option>)}</select></label>
                 <label>Status<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>

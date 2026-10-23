@@ -12,8 +12,8 @@ if (!email || !password) {
     console.error("Set ADMIN_EMAIL and ADMIN_PASSWORD in backend/.env before creating the admin account.");
     process.exit(1);
 }
-if (password.length < 12) {
-    console.error("Use an admin password with at least 12 characters.");
+if (password.length < 12 || Buffer.byteLength(password, "utf8") > 72) {
+    console.error("Use an admin password with at least 12 characters and no more than 72 UTF-8 bytes.");
     process.exit(1);
 }
 
@@ -54,7 +54,7 @@ try {
     }
     console.log(`Admin account ready for ${email}.`);
 } catch (error) {
-    console.error(`Could not create admin account: ${error.message}`);
+    console.error(`Could not create admin account (${error?.name || "Error"}, code ${error?.code ?? "n/a"}).`);
     process.exitCode = 1;
 } finally {
     await client.close();

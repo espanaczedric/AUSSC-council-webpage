@@ -7,7 +7,8 @@ import NotificationCenter from "./NotificationCenter";
 const links = [
     { label: "Overview", to: "/admin", end: true, icon: "overview" },
     { label: "Events", to: "/admin/events", icon: "events" },
-    { label: "Registrations", to: "/admin/registrations", icon: "registrations" },
+    { label: "Announcements", to: "/admin/announcements", icon: "updates" },
+    { label: "Participation", to: "/admin/event-responses", icon: "registrations" },
     { label: "Attendance", to: "/admin/attendance", icon: "attendance" },
     { label: "People", to: "/admin/users", icon: "people" },
     { label: "Highlights", to: "/admin/highlights", icon: "highlights" },
@@ -37,7 +38,8 @@ function AdminNavIcon({ name }) {
         highlights: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m4 18 5-5 4 4 3-3 4 4" /></>,
         home: <><path d="m3 10 9-7 9 7" /><path d="M5 9v11h14V9" /><path d="M9 20v-6h6v6" /></>,
         more: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>,
-        profile: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>
+        profile: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
+        updates: <><path d="m3 11 18-5-5 16-4-7-9-4Z" /><path d="m12 15 4-5" /><path d="M3 11v6l4-2" /></>
     };
     return <svg {...common}>{paths[name]}</svg>;
 }
@@ -87,7 +89,8 @@ export default function AdminNav() {
             .map((link) => ({
                 ...link,
                 description: {
-                    Registrations: "Review event sign-ups and student records",
+                    "Participation": "See council members’ intent to help at each event",
+                    Announcements: "Write and publish notices for the public site",
                     People: "Council members and account access",
                     Highlights: "Manage published campus highlights",
                     Finance: "Budgets, allocations, and expenses",
