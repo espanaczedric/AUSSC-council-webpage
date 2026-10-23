@@ -55,7 +55,7 @@ function EventHero({ event, loadError = false }) {
                     </div>
                 )}
             </div>
-            <div className="home-hero-footer" aria-hidden="true"><span /> Campus life, shaped together</div>
+            <div className="home-hero-footer" aria-hidden="true"><span /> For the Students, We Remain</div>
         </section>
     );
 }
