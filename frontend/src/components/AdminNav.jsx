@@ -186,7 +186,11 @@ export default function AdminNav() {
                     <strong>{currentLabel}</strong>
                 </div>
                 <div className="admin-topbar-actions">
-                    <Link className="admin-topbar-public-link" to="/">View public site <span aria-hidden="true">↗</span></Link>
+                    <Link className="admin-topbar-public-link" to="/" aria-label="View public site">
+                        <span className="admin-topbar-public-full">View public site</span>
+                        <span className="admin-topbar-public-compact">Public site</span>
+                        <span aria-hidden="true">↗</span>
+                    </Link>
                     {user && <NotificationCenter />}
                     <button className="admin-topbar-logout" type="button" onClick={handleSignOut} disabled={signingOut}>
                         {signingOut ? "Signing out…" : "Sign out"}

@@ -336,15 +336,19 @@ function Navbar() {
                 </div>
 
                 <div className="navbar-actions">
-                    {hasExecutiveAccess(user) ? (
-                        <NavLink className="navbar-workspace-link" to="/admin" onClick={() => setMenuOpen(false)}>
-                            Executive workspace
+                    {workspaceLink && (
+                        <NavLink
+                            className="navbar-workspace-link"
+                            to={workspaceLink.to}
+                            aria-label={workspaceLink.label}
+                            onClick={() => setMenuOpen(false)}
+                        >
+                            <span className="navbar-workspace-link-full">{workspaceLink.label}</span>
+                            <span className="navbar-workspace-link-compact">
+                                {hasExecutiveAccess(user) || user?.committee_assignment ? "Workspace" : user?.council_position ? "Assignment" : "My events"}
+                            </span>
                         </NavLink>
-                    ) : user ? (
-                        <NavLink className="navbar-workspace-link" to={user.committee_assignment ? getCommitteeWorkspacePath(user) : "/my-events"} onClick={() => setMenuOpen(false)}>
-                            {user.committee_assignment ? `${committeeLabels[user.committee_assignment]?.replace(" Committee", "")} workspace` : user.council_position ? "Committee Assignment" : "My registrations"}
-                        </NavLink>
-                    ) : null}
+                    )}
 
                 {/* ---- LOGIN / AVATAR ---- */}
                     <div className="navbar-user-wrapper">
