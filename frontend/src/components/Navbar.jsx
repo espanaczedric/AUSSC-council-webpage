@@ -594,10 +594,6 @@ function Navbar() {
                     <NavLink to="/transparency" onClick={() => setMenuOpen(false)}><NavigationIcon name="transparency" /><span><strong>Transparency</strong><small>Budgets and published reports</small></span><b aria-hidden="true">›</b></NavLink>
                     <NavLink to="/about" onClick={() => setMenuOpen(false)}><NavigationIcon name="about" /><span><strong>About the Council</strong><small>Mission, vision, and mandate</small></span><b aria-hidden="true">›</b></NavLink>
                     {user?.council_position && <NavLink to="/council" onClick={() => setMenuOpen(false)}><NavigationIcon name="committees" /><span><strong>Council governance</strong><small>Meetings, records, and oversight</small></span><b aria-hidden="true">›</b></NavLink>}
-                    {workspaceLink && <Link to={workspaceLink.to} onClick={() => setMenuOpen(false)}><NavigationIcon name="committees" /><span><strong>{workspaceLink.label}</strong><small>Open your council workspace</small></span><b aria-hidden="true">›</b></Link>}
-                    {user && <Link to="/profile" onClick={() => setMenuOpen(false)}><AccountIcon /><span><strong>My profile</strong><small>View and update your account</small></span><b aria-hidden="true">›</b></Link>}
-                    {!user && <Link to="/login" onClick={() => setMenuOpen(false)}><AccountIcon /><span><strong>Sign in</strong><small>Access your student account</small></span><b aria-hidden="true">›</b></Link>}
-                    {!user && <Link to="/register-account" onClick={() => setMenuOpen(false)}><AccountIcon /><span><strong>Create a student account</strong><small>Register with your PHINMA Education email</small></span><b aria-hidden="true">›</b></Link>}
                 </div>
             </section>
         </div>}

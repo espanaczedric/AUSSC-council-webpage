@@ -5181,6 +5181,161 @@ canvas {
     }
 }
 
+.admin-mobile-more-scrim {
+    display: none;
+}
+
+@media (max-width: 700px) {
+    .admin-mobile-more-scrim {
+        position: fixed;
+        z-index: 1150;
+        inset: 0;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding: 16px 12px calc(88px + env(safe-area-inset-bottom, 0px));
+        background: rgba(3, 12, 23, .58);
+        -webkit-backdrop-filter: blur(4px);
+        backdrop-filter: blur(4px);
+    }
+
+    .admin-mobile-more-sheet {
+        width: min(100%, 480px);
+        max-height: calc(100dvh - 145px - env(safe-area-inset-bottom, 0px));
+        overflow-x: hidden;
+        overflow-y: auto;
+        padding: 18px;
+        border: 1px solid rgba(164, 190, 216, .32);
+        border-radius: 23px;
+        background: linear-gradient(160deg, #102943 0%, #071629 100%);
+        box-shadow: 0 22px 64px rgba(0, 8, 19, .44);
+        color: #f2f6fb;
+        overscroll-behavior: contain;
+    }
+
+    .admin-mobile-more-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+    }
+
+    .admin-mobile-more-heading > div {
+        display: grid;
+        gap: 5px;
+    }
+
+    .admin-mobile-more-heading > div > span {
+        color: #f4bd35;
+        font-size: .61rem;
+        font-weight: 850;
+        letter-spacing: .15em;
+    }
+
+    .admin-mobile-more-heading strong {
+        color: #f4f7fb;
+        font-size: 1.2rem;
+        line-height: 1.2;
+    }
+
+    .admin-mobile-more-heading button {
+        display: grid;
+        width: 42px;
+        height: 42px;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid rgba(199, 216, 235, .22);
+        border-radius: 50%;
+        background: #1c3652;
+        color: #e9f1fa;
+        font: inherit;
+        font-size: 1.45rem;
+        line-height: 1;
+        cursor: pointer;
+    }
+
+    .admin-mobile-more-links {
+        display: grid;
+        gap: 9px;
+    }
+
+    .admin-mobile-more-links > a {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        min-height: 68px;
+        padding: 11px 13px;
+        border: 1px solid rgba(175, 198, 222, .18);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, .055);
+        color: #f0f5fb;
+        text-decoration: none;
+        transition: background .16s ease, border-color .16s ease, transform .16s ease;
+    }
+
+    .admin-mobile-more-links > a:hover,
+    .admin-mobile-more-links > a:focus-visible {
+        border-color: rgba(247, 190, 53, .54);
+        background: rgba(255, 255, 255, .105);
+        outline: none;
+        transform: translateY(-1px);
+    }
+
+    .admin-mobile-more-links > a > svg {
+        width: 21px;
+        height: 21px;
+        color: #f4bd35;
+    }
+
+    .admin-mobile-more-links > a > span {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+    }
+
+    .admin-mobile-more-links > a strong {
+        overflow: hidden;
+        font-size: .89rem;
+        font-weight: 750;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .admin-mobile-more-links > a small {
+        color: #a9bad0;
+        font-size: .73rem;
+        line-height: 1.35;
+    }
+
+    .admin-mobile-more-links > a > b {
+        color: #f4bd35;
+        font-size: 1.35rem;
+        font-weight: 600;
+    }
+
+    .admin-mobile-more-empty {
+        margin: 0;
+        padding: 15px;
+        border: 1px solid rgba(175, 198, 222, .18);
+        border-radius: 15px;
+        color: #b7c5d6;
+        font-size: .84rem;
+        line-height: 1.5;
+    }
+}
+
+@media (max-width: 700px) and (orientation: landscape) and (max-height: 520px) {
+    .admin-mobile-more-scrim {
+        padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .admin-mobile-more-sheet {
+        max-height: calc(100dvh - 90px - env(safe-area-inset-bottom, 0px));
+    }
+}
+
 @media (max-width: 900px) {
     .admin-shell-topbar {
         min-width: 0;
@@ -6235,5 +6390,71 @@ canvas {
         max-width: 82px;
         padding-inline: 7px;
         font-size: .6rem;
+    }
+}
+
+@media (max-width: 700px) {
+    .public-mobile-dock {
+        border-color: #dbe3ed;
+        background: rgba(255, 255, 255, .98);
+        box-shadow: 0 10px 28px rgba(7, 22, 41, .16);
+        -webkit-backdrop-filter: blur(18px) saturate(160%);
+        backdrop-filter: blur(18px) saturate(160%);
+    }
+
+    .public-mobile-dock .public-mobile-dock-link {
+        color: #52647a;
+    }
+
+    .public-mobile-dock .public-mobile-dock-link[aria-current="page"],
+    .public-mobile-dock .public-mobile-dock-link.is-active {
+        background: #fff2ca;
+        color: #80570c;
+    }
+
+    body:has(.admin-mobile-more-scrim),
+    body:has(.public-mobile-more-scrim) {
+        overflow: hidden;
+    }
+
+    .admin-mobile-dock {
+        grid-template-columns: repeat(var(--admin-dock-columns, 5), minmax(0, 1fr));
+    }
+}
+
+/* Keep the split authentication layout full-bleed on phones. */
+@media (max-width: 700px) {
+    .login-page.login-redesign {
+        display: block;
+        width: 100%;
+        max-width: none;
+        min-height: 100svh;
+        min-height: 100dvh;
+        margin: 0;
+        padding: 0;
+        border-radius: 0;
+        overflow-x: clip;
+    }
+
+    .login-page.login-redesign .login-story {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .login-page.login-redesign .login-panel {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .login-page.login-redesign .login-story-logo {
+        top: 18px;
+        left: 20px;
+        width: min(136px, 36vw);
+    }
+}
+
+@media (max-width: 420px) {
+    .login-page.login-redesign .login-story-logo {
+        width: min(110px, 35vw);
     }
 }

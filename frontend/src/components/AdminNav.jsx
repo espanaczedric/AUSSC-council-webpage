@@ -48,9 +48,11 @@ function initialsFor(user) {
 
 export default function AdminNav() {
     const [menuOpen, setMenuOpen] = useState(false);
+    const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
     const asideRef = useRef(null);
     const toggleRef = useRef(null);
     const dockMoreRef = useRef(null);
+    const mobileMoreRef = useRef(null);
     const location = useLocation();
     const navigate = useNavigate();
     const [signingOut, setSigningOut] = useState(false);
@@ -77,10 +79,28 @@ export default function AdminNav() {
         { label: "Committees", to: "/admin/committees/executive", icon: "people", committee: true }
     ] : [
         committeeLink[0] || (user?.council_position ? { label: "Governance", to: "/council", end: true, icon: "people" } : null),
-        { label: "My events", to: "/my-events", icon: "events" },
-        { label: "Profile", to: "/profile", end: true, icon: "profile" },
-        { label: "Public site", to: "/", end: true, icon: "home" }
+        { label: "My events", to: "/my-events", icon: "events" }
     ].filter(Boolean);
+    const mobileMoreLinks = isExecutive
+        ? links
+            .filter((link) => !mobileDockLinks.some((dockLink) => dockLink.to === link.to))
+            .map((link) => ({
+                ...link,
+                description: {
+                    Registrations: "Review event sign-ups and student records",
+                    People: "Council members and account access",
+                    Highlights: "Manage published campus highlights",
+                    Finance: "Budgets, allocations, and expenses",
+                    "Council governance": "Council seats, terms, and oversight"
+                }[link.label] || "Open this workspace section"
+            }))
+            .concat({ label: "My profile", to: "/profile", icon: "profile", description: "View and update your account" })
+        : [
+            ...(user?.council_position && committeeLink.length
+                ? [{ label: "Council governance", to: "/council", icon: "events", description: "Council seats, terms, and oversight" }]
+                : []),
+            { label: "My profile", to: "/profile", icon: "profile", description: "View and update your account" }
+        ];
     const isCommitteeWorkspaceRoute = location.pathname.startsWith("/admin/committees/");
     const current = visibleLinks.find((link) => (link.end
         ? location.pathname === link.to
@@ -90,7 +110,10 @@ export default function AdminNav() {
         : null;
     const currentLabel = (selectedCommittee && committeeLabels[selectedCommittee]) || current.label;
 
-    useEffect(() => setMenuOpen(false), [location.pathname]);
+    useEffect(() => {
+        setMenuOpen(false);
+        setMobileMoreOpen(false);
+    }, [location.pathname]);
 
     useEffect(() => {
         if (!menuOpen) return undefined;
@@ -116,6 +139,27 @@ export default function AdminNav() {
             document.removeEventListener("keydown", onKeyDown);
         };
     }, [menuOpen]);
+
+    useEffect(() => {
+        if (!mobileMoreOpen) return undefined;
+        function onPointerDown(event) {
+            if (!mobileMoreRef.current?.contains(event.target) && !dockMoreRef.current?.contains(event.target)) {
+                setMobileMoreOpen(false);
+            }
+        }
+        function onKeyDown(event) {
+            if (event.key === "Escape") {
+                setMobileMoreOpen(false);
+                dockMoreRef.current?.focus();
+            }
+        }
+        document.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("keydown", onKeyDown);
+        };
+    }, [mobileMoreOpen]);
 
     function closeMenu() {
         setMenuOpen(false);
@@ -198,12 +242,16 @@ export default function AdminNav() {
                 </div>
             </header>
 
-            <nav className={`admin-mobile-dock${menuOpen ? " is-more-open" : ""}`} aria-label="Workspace destinations">
+            <nav
+                className={`admin-mobile-dock${mobileMoreOpen ? " is-more-open" : ""}`}
+                style={{ "--admin-dock-columns": mobileDockLinks.length + 1 }}
+                aria-label="Workspace destinations"
+            >
                 {mobileDockLinks.map((link) => <NavLink
                     key={link.to}
                     to={link.to}
                     end={link.end}
-                    className={({ isActive }) => `admin-mobile-dock-link${!menuOpen && (isActive || (link.committee && isCommitteeWorkspaceRoute)) ? " is-active" : ""}`}
+                    className={({ isActive }) => `admin-mobile-dock-link${!mobileMoreOpen && (isActive || (link.committee && isCommitteeWorkspaceRoute)) ? " is-active" : ""}`}
                     onClick={closeMenu}
                 >
                     <AdminNavIcon name={link.icon} />
@@ -212,16 +260,44 @@ export default function AdminNav() {
                 <button
                     ref={dockMoreRef}
                     type="button"
-                    className={`admin-mobile-dock-link admin-mobile-dock-more${menuOpen ? " is-active" : ""}`}
-                    aria-label={menuOpen ? "Close workspace navigation" : "Open more workspace destinations"}
-                    aria-expanded={menuOpen}
-                    aria-controls="admin-navigation"
-                    onClick={() => setMenuOpen((open) => !open)}
+                    className={`admin-mobile-dock-link admin-mobile-dock-more${mobileMoreOpen ? " is-active" : ""}`}
+                    aria-label={mobileMoreOpen ? "Close more workspace destinations" : "Open more workspace destinations"}
+                    aria-expanded={mobileMoreOpen}
+                    aria-controls="admin-mobile-more-menu"
+                    onClick={() => {
+                        setMenuOpen(false);
+                        setMobileMoreOpen((open) => !open);
+                    }}
                 >
                     <AdminNavIcon name="more" />
                     <span>More</span>
                 </button>
             </nav>
+
+            {mobileMoreOpen && <div className="admin-mobile-more-scrim" onClick={() => setMobileMoreOpen(false)}>
+                <section
+                    ref={mobileMoreRef}
+                    className="admin-mobile-more-sheet"
+                    id="admin-mobile-more-menu"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="More workspace destinations"
+                    onClick={(event) => event.stopPropagation()}
+                >
+                    <div className="admin-mobile-more-heading">
+                        <div><span>COUNCIL WORKSPACE</span><strong>More destinations</strong></div>
+                        <button type="button" aria-label="Close more destinations" onClick={() => setMobileMoreOpen(false)}>×</button>
+                    </div>
+                    <div className="admin-mobile-more-links">
+                        {mobileMoreLinks.map((link) => <Link key={link.to} to={link.to} onClick={() => setMobileMoreOpen(false)}>
+                            <AdminNavIcon name={link.icon} />
+                            <span><strong>{link.label}</strong><small>{link.description}</small></span>
+                            <b aria-hidden="true">›</b>
+                        </Link>)}
+                        {!mobileMoreLinks.length && <p className="admin-mobile-more-empty">No additional workspace destinations are available for this account.</p>}
+                    </div>
+                </section>
+            </div>}
         </>
     );
 }
