@@ -6449,12 +6449,134 @@ canvas {
     .login-page.login-redesign .login-story-logo {
         top: 18px;
         left: 20px;
-        width: min(136px, 36vw);
+        width: min(172px, 45vw);
     }
 }
 
 @media (max-width: 420px) {
     .login-page.login-redesign .login-story-logo {
-        width: min(110px, 35vw);
+        width: min(154px, 43vw);
+    }
+}
+
+/* Shared motion for navigation, popovers, and dialogs. */
+@keyframes ui-overlay-enter {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes ui-popup-enter {
+    from { opacity: 0; transform: translateY(12px) scale(.975); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes ui-dropdown-enter {
+    from { opacity: 0; transform: translateY(-7px) scale(.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes ui-sheet-enter {
+    from { opacity: 0; transform: translateY(22px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .profile-crop-backdrop,
+    .committee-dialog-backdrop,
+    .publication-modal-backdrop,
+    .public-mobile-more-scrim,
+    .admin-mobile-more-scrim,
+    .admin-sidebar-scrim,
+    .admin-nav-backdrop {
+        animation: ui-overlay-enter .2s ease-out both;
+    }
+
+    .profile-crop-dialog,
+    .directory-roster,
+    .publication-create-modal,
+    .committee-public-profile {
+        animation: ui-popup-enter .24s cubic-bezier(.2, .75, .25, 1) both;
+    }
+
+    .public-mobile-more-sheet,
+    .admin-mobile-more-sheet {
+        animation: ui-sheet-enter .28s cubic-bezier(.2, .75, .25, 1) both;
+        transform-origin: bottom center;
+    }
+
+    .navbar-dropdown,
+    .notification-popover,
+    .navbar-links.is-open,
+    .admin-topbar .admin-nav.is-open {
+        animation: ui-dropdown-enter .2s cubic-bezier(.2, .75, .25, 1) both;
+        transform-origin: top right;
+    }
+
+    .navbar-user-details {
+        animation: ui-dropdown-enter .2s cubic-bezier(.2, .75, .25, 1) both;
+        transform-origin: top center;
+    }
+
+    .admin-sidebar.is-open {
+        transition: transform .28s cubic-bezier(.2, .75, .25, 1), visibility 0s;
+    }
+
+    .navbar :is(a, button),
+    .admin-shell-topbar :is(a, button),
+    .admin-sidebar-link,
+    .admin-mobile-dock-link,
+    .public-mobile-dock-link,
+    .public-mobile-more-sheet :is(a, button),
+    .admin-mobile-more-sheet :is(a, button) {
+        transition: transform .18s cubic-bezier(.2, .75, .25, 1),
+            color .18s ease,
+            background-color .18s ease,
+            border-color .18s ease,
+            box-shadow .18s ease;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .navbar :is(a, button):active:not(:disabled),
+    .admin-shell-topbar :is(a, button):active:not(:disabled),
+    .admin-sidebar-link:active,
+    .admin-mobile-dock-link:active,
+    .public-mobile-dock-link:active,
+    .public-mobile-more-sheet :is(a, button):active:not(:disabled),
+    .admin-mobile-more-sheet :is(a, button):active:not(:disabled) {
+        transform: scale(.96);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .profile-crop-backdrop,
+    .profile-crop-dialog,
+    .committee-dialog-backdrop,
+    .directory-roster,
+    .committee-public-profile,
+    .publication-modal-backdrop,
+    .publication-create-modal,
+    .public-mobile-more-scrim,
+    .public-mobile-more-sheet,
+    .admin-mobile-more-scrim,
+    .admin-mobile-more-sheet,
+    .admin-sidebar-scrim,
+    .admin-nav-backdrop,
+    .navbar-dropdown,
+    .notification-popover,
+    .navbar-links.is-open,
+    .admin-topbar .admin-nav.is-open,
+    .navbar-user-details {
+        animation: none !important;
+    }
+
+    .navbar :is(a, button),
+    .admin-shell-topbar :is(a, button),
+    .admin-sidebar-link,
+    .admin-mobile-dock-link,
+    .public-mobile-dock-link,
+    .public-mobile-more-sheet :is(a, button),
+    .admin-mobile-more-sheet :is(a, button),
+    .admin-sidebar.is-open {
+        transition: none !important;
     }
 }
