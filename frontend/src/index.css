@@ -6128,7 +6128,9 @@ canvas {
 
 @media (max-width: 700px) {
     .admin-sidebar.is-open {
-        padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+        bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+        padding-bottom: 16px;
+        border-bottom-right-radius: 22px;
     }
 
     .admin-sidebar.is-open .admin-sidebar-link.is-active,
