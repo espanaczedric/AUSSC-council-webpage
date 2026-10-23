@@ -6591,6 +6591,10 @@ canvas {
     }
 
     .navbar {
+        height: 60px;
+    }
+
+    .navbar {
         right: auto;
         left: 50%;
         width: calc(100% - 24px);
@@ -6599,8 +6603,9 @@ canvas {
 
     .navbar-container {
         width: calc(100% - 16px);
+        height: 58px;
         min-height: 58px;
-        gap: clamp(5px, 1.5vw, 8px);
+        gap: clamp(4px, 1.3vw, 6px);
     }
 
     .navbar-logo {
@@ -6610,7 +6615,7 @@ canvas {
 
     .navbar-logo img {
         display: block;
-        width: clamp(112px, 39.5vw, 172px);
+        width: clamp(112px, 38vw, 148px);
         max-width: 100%;
         height: auto;
         object-fit: contain;
@@ -6622,11 +6627,20 @@ canvas {
     }
 
     .navbar-actions .navbar-workspace-link {
-        min-height: 40px;
-        max-width: 92px;
-        padding: 6px 8px;
+        display: inline-flex;
+        width: 80px;
+        min-width: 76px;
+        max-width: 84px;
+        height: 42px;
+        min-height: 42px;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        flex: 0 0 auto;
+        padding: 0 6px;
         font-size: clamp(.58rem, 2.2vw, .68rem);
-        line-height: 1.1;
+        line-height: 1;
+        white-space: nowrap;
     }
 
     .navbar-user-wrapper {
@@ -6635,9 +6649,12 @@ canvas {
 
     .navbar-user-wrapper .notification-trigger,
     .navbar-avatar {
-        width: 40px;
-        height: 40px;
-        flex: 0 0 40px;
+        width: 42px;
+        min-width: 42px;
+        height: 42px;
+        min-height: 42px;
+        box-sizing: border-box;
+        flex: 0 0 42px;
     }
 
     .admin-shell-topbar {
@@ -6705,12 +6722,14 @@ canvas {
     }
 
     .navbar-logo img {
-        width: clamp(104px, 35vw, 126px);
+        width: clamp(96px, 32vw, 115px);
     }
 
     .navbar-actions .navbar-workspace-link {
+        width: 76px;
+        min-width: 76px;
         max-width: 76px;
-        padding-inline: 6px;
+        padding-inline: 5px;
     }
 
     .admin-shell-topbar {
