@@ -5120,3 +5120,639 @@ select:focus-visible, textarea:focus-visible {
 @media (max-width: 420px) {
     .admin-topbar-public-link { display: none; }
 }
+
+/* Cross-device layout refinements */
+img,
+video,
+canvas {
+    max-width: 100%;
+}
+
+.admin-page,
+.directory-page,
+.about-page,
+.updates-page,
+.transparency-page,
+.member-events-page,
+.council-profile-page,
+.publication-admin-page,
+.publication-member-page {
+    min-width: 0;
+}
+
+.admin-page-heading > div,
+.admin-overview-heading > div,
+.admin-section-heading > div,
+.committee-list-heading > div {
+    min-width: 0;
+}
+
+.admin-page-heading h1,
+.admin-page-heading p,
+.admin-card,
+.admin-section,
+.admin-overview-chart-card,
+.publication-admin-queue,
+.publication-admin-detail,
+.publication-analytics-card,
+.publication-member-task {
+    overflow-wrap: anywhere;
+}
+
+.admin-table-wrap,
+.admin-data-scroll {
+    max-width: 100%;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 1100px) {
+    .publication-admin-workarea {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .publication-admin-queue,
+    .publication-admin-detail {
+        min-width: 0;
+    }
+
+    .finance-public-filters {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 900px) {
+    .admin-shell-topbar {
+        min-width: 0;
+    }
+
+    .admin-topbar-context {
+        min-width: 0;
+    }
+
+    .admin-topbar-context strong {
+        overflow: hidden;
+        max-width: 32vw;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .admin-topbar-actions {
+        min-width: 0;
+        gap: clamp(6px, 1.5vw, 12px);
+    }
+
+    .admin-page-heading {
+        flex-wrap: wrap;
+        align-items: flex-start;
+    }
+
+    .committee-work-board,
+    .publication-admin-board {
+        max-width: 100%;
+    }
+
+    .council-meeting-layout {
+        grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr);
+    }
+}
+
+@media (max-width: 760px) {
+    .directory-page,
+    .about-page,
+    .updates-page,
+    .transparency-page,
+    .member-events-page,
+    .council-profile-page {
+        width: calc(100% - 32px);
+    }
+
+    .directory-page,
+    .about-page,
+    .updates-page,
+    .transparency-page,
+    .member-events-page {
+        padding-top: 28px;
+    }
+
+    .events-page,
+    .my-events-page,
+    .event-details-page,
+    .confirmation-page,
+    .login-page,
+    .register-account-page,
+    .registration-page {
+        width: calc(100% - 32px);
+    }
+
+    .admin-page-heading h1,
+    .events-page-intro h1,
+    .event-details-overlay h1 {
+        font-size: clamp(2rem, 8vw, 3.2rem);
+        line-height: 1.08;
+    }
+
+    .admin-overview-heading,
+    .admin-dashboard-skeleton .admin-page-heading,
+    .publication-admin-page .admin-page-heading {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .admin-overview-heading > .admin-primary-action,
+    .admin-page-heading > .admin-primary-action,
+    .admin-page-heading > .ui-skeleton-button {
+        max-width: 100%;
+    }
+
+    .admin-overview-metrics,
+    .council-governance-metrics,
+    .publication-admin-metrics,
+    .publication-member-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .admin-overview-chart-grid,
+    .publication-analytics-grid,
+    .publication-admin-workarea,
+    .publication-member-task-grid,
+    .council-meeting-layout,
+    .council-inventory-list,
+    .directory-grid,
+    .event-details-content,
+    .about-mission-vision,
+    .updates-featured,
+    .about-principles,
+    .about-purpose {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .committee-work-form,
+    .finance-entry-form,
+    .publication-create-form,
+    .council-inventory-form,
+    .council-report-form,
+    .profile-edit-fields,
+    .register-fields-grid,
+    .ui-skeleton-form-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .committee-work-details,
+    .finance-document-field,
+    .publication-create-form label.is-wide {
+        grid-column: 1 / -1;
+    }
+
+    .transparency-hero,
+    .transparency-guidance,
+    .council-profile-actions {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .transparency-mark {
+        width: 84px;
+        height: 84px;
+        flex-basis: 84px;
+    }
+
+    .directory-card {
+        min-height: 0;
+    }
+
+    .directory-roster,
+    .profile-crop-dialog,
+    .publication-create-modal {
+        width: min(100%, 720px);
+    }
+
+    .admin-skeleton-graph {
+        gap: 8px;
+        padding-left: 22px;
+    }
+}
+
+@media (max-width: 560px) {
+    .navbar-container {
+        width: calc(100% - 24px);
+    }
+
+    .navbar-links,
+    .navbar-links.is-open {
+        max-height: calc(100dvh - 82px);
+        max-height: calc(100svh - 82px);
+        max-height: calc(100dvh - 82px);
+    }
+
+    .admin-shell-topbar {
+        gap: 8px;
+        padding-inline: 9px;
+    }
+
+    .admin-topbar-context > span {
+        letter-spacing: .08em;
+    }
+
+    .admin-topbar-context strong {
+        max-width: 29vw;
+        font-size: .78rem;
+    }
+
+    .admin-topbar-actions {
+        gap: 6px;
+    }
+
+    .admin-topbar-logout {
+        padding-inline: 8px;
+        white-space: nowrap;
+    }
+
+    .admin-page,
+    .events-page,
+    .my-events-page,
+    .event-details-page,
+    .confirmation-page,
+    .login-page,
+    .register-account-page,
+    .registration-page,
+    .member-events-page {
+        width: calc(100% - 28px);
+    }
+
+    .admin-page {
+        padding-bottom: 44px;
+    }
+
+    .admin-page-heading {
+        gap: 12px;
+        margin-bottom: 22px;
+    }
+
+    .admin-page-heading h1,
+    .publication-member-page .admin-page-heading h1 {
+        font-size: clamp(1.85rem, 9vw, 2.6rem);
+    }
+
+    .admin-overview-metrics,
+    .admin-metrics,
+    .publication-admin-metrics,
+    .publication-member-metrics,
+    .council-governance-metrics,
+    .committee-focus-grid,
+    .finance-metric-grid,
+    .finance-public-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 9px;
+    }
+
+    .admin-overview-metric,
+    .admin-metric,
+    .publication-admin-metrics article {
+        min-width: 0;
+        padding: 13px 11px;
+    }
+
+    .admin-overview-metric > strong,
+    .admin-metric strong,
+    .finance-metric-grid strong {
+        overflow-wrap: anywhere;
+        font-size: clamp(1.25rem, 7vw, 1.75rem);
+    }
+
+    .admin-list-toolbar,
+    .attendance-list-toolbar,
+    .attendance-summary,
+    .finance-public-filters {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .admin-list-toolbar > *,
+    .admin-search-field input,
+    .admin-filter-field select,
+    .attendance-list-toolbar input,
+    .attendance-list-toolbar select {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .committee-work-form,
+    .finance-entry-form,
+    .publication-create-form,
+    .council-inventory-form,
+    .council-report-form,
+    .profile-edit-fields,
+    .register-fields-grid,
+    .ui-skeleton-form-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .committee-work-details,
+    .finance-document-field,
+    .publication-create-form label.is-wide,
+    .council-report-form h3,
+    .council-inventory-form h3,
+    .council-inventory-notes {
+        grid-column: auto;
+    }
+
+    .event-browser-toolbar {
+        align-items: stretch;
+    }
+
+    .event-filter-tabs {
+        max-width: 100%;
+        scrollbar-width: thin;
+        overscroll-behavior-x: contain;
+    }
+
+    .event-search {
+        width: 100%;
+    }
+
+    .event-details-hero,
+    .event-details-overlay {
+        min-height: 300px;
+    }
+
+    .event-details-overlay {
+        padding: 24px 19px;
+    }
+
+    .event-main-info,
+    .event-information,
+    .admin-overview-chart-card,
+    .publication-analytics-card,
+    .publication-admin-queue,
+    .publication-admin-detail {
+        padding: 16px;
+    }
+
+    .transparency-hero,
+    .updates-hero,
+    .about-hero,
+    .directory-hero {
+        padding: 28px 21px;
+        border-radius: 17px;
+    }
+
+    .updates-hero {
+        flex-direction: column;
+    }
+
+    .updates-hero-stamp {
+        align-self: flex-end;
+    }
+
+    .admin-topbar-public-link {
+        display: none;
+    }
+
+    .notification-popover {
+        position: fixed;
+        top: 68px;
+        right: 12px;
+        left: 12px;
+        width: auto;
+        max-height: calc(100dvh - 82px);
+    }
+
+    .notification-list {
+        max-height: calc(100dvh - 160px);
+    }
+
+    .publication-modal-backdrop,
+    .committee-dialog-backdrop,
+    .profile-crop-backdrop {
+        align-items: start;
+        padding: 10px;
+    }
+
+    .publication-create-modal,
+    .directory-roster,
+    .profile-crop-dialog {
+        max-height: calc(100dvh - 20px);
+        padding: 17px 14px;
+        border-radius: 16px;
+    }
+
+    .publication-create-modal-header,
+    .directory-roster-heading,
+    .profile-crop-header {
+        gap: 10px;
+    }
+
+    .publication-create-actions,
+    .profile-crop-actions {
+        flex-wrap: wrap;
+    }
+
+    .publication-create-actions > *,
+    .profile-crop-actions > * {
+        flex: 1 1 140px;
+    }
+
+    .publication-task-toolbar > div:last-child {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .publication-task-toolbar input {
+        grid-column: auto;
+    }
+
+    .council-meeting-detail,
+    .council-meeting-list,
+    .council-meeting-editor,
+    .council-standing-section,
+    .council-excuse-queue {
+        padding: 14px;
+    }
+
+    .profile-heading-row {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .profile-edit-trigger {
+        max-width: 100%;
+    }
+
+    .profile-edit-form {
+        margin-inline: 14px;
+    }
+
+    .profile-crop-controls {
+        grid-template-columns: auto minmax(40px, 1fr) 42px;
+    }
+
+    .admin-skeleton-upcoming-row,
+    .ui-skeleton-rows.has-image .ui-skeleton-row {
+        grid-template-columns: 48px minmax(0, 1fr);
+        gap: 10px;
+        padding: 12px;
+    }
+
+    .ui-skeleton-rows:not(.has-image) .ui-skeleton-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        padding: 12px;
+    }
+
+    .ui-skeleton-rows.has-image .ui-skeleton-row-copy,
+    .ui-skeleton-rows.has-image .ui-skeleton-row-end {
+        grid-column: 2;
+    }
+
+    .admin-skeleton-upcoming-image {
+        width: 48px;
+        height: 48px;
+    }
+
+}
+
+@media (max-width: 360px) {
+    .admin-shell-topbar {
+        right: 6px;
+        left: 6px;
+        padding-inline: 7px;
+    }
+
+    .admin-mobile-menu-toggle {
+        width: 34px;
+        height: 34px;
+    }
+
+    .admin-topbar-context > span {
+        display: none;
+    }
+
+    .admin-topbar-context strong {
+        max-width: 27vw;
+    }
+
+    .admin-topbar-logout {
+        padding-inline: 6px;
+        font-size: .64rem;
+    }
+
+    .admin-overview-metrics,
+    .admin-metrics,
+    .publication-admin-metrics,
+    .publication-member-metrics,
+    .council-governance-metrics {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .publication-task-dates {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .profile-crop-controls {
+        grid-template-columns: minmax(0, 1fr) 42px;
+    }
+
+    .profile-crop-controls label {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-height: 520px) and (orientation: landscape) {
+    .navbar-links,
+    .navbar-links.is-open,
+    .admin-topbar .admin-nav,
+    .admin-topbar .admin-nav.is-open {
+        max-height: calc(100dvh - 76px);
+    }
+
+    .admin-sidebar {
+        overflow-y: auto;
+    }
+
+    .admin-sidebar-nav {
+        flex: 0 1 auto;
+        max-height: 42dvh;
+    }
+
+    .navbar,
+    .admin-shell-topbar {
+        top: 6px;
+    }
+
+    .publication-modal-backdrop,
+    .committee-dialog-backdrop,
+    .profile-crop-backdrop {
+        align-items: start;
+        padding: 8px;
+    }
+
+    .publication-create-modal,
+    .directory-roster,
+    .profile-crop-dialog {
+        max-height: calc(100dvh - 16px);
+        margin-block: 0;
+    }
+
+    .login-redesign {
+        grid-template-columns: minmax(0, .72fr) minmax(0, 1.28fr);
+        min-height: 100dvh;
+    }
+
+    .login-story,
+    .login-panel {
+        min-height: 100dvh;
+    }
+
+    .login-story {
+        padding: 20px;
+    }
+
+    .login-story-logo {
+        top: 18px;
+        left: 20px;
+        width: min(220px, 70%);
+    }
+
+    .login-story-bottom {
+        right: 20px;
+        bottom: 40px;
+        left: 20px;
+        flex-wrap: wrap;
+    }
+
+    .login-story-copyright {
+        bottom: 14px;
+        left: 20px;
+    }
+
+    .login-panel {
+        align-content: start;
+        padding: 22px clamp(18px, 4vw, 38px);
+    }
+}
+
+@media (max-height: 420px) and (orientation: landscape) and (max-width: 900px) {
+    .login-redesign {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .login-story {
+        min-height: 180px;
+    }
+
+    .login-panel {
+        min-height: auto;
+        padding-block: 28px;
+    }
+}
+
+@media (pointer: coarse) {
+    .navbar-menu-button,
+    .admin-mobile-menu-toggle,
+    .notification-trigger,
+    .publication-create-modal-close,
+    .profile-crop-close,
+    .directory-roster-close {
+        min-width: 42px;
+        min-height: 42px;
+    }
+}
